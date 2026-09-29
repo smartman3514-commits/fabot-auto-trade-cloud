@@ -1,0 +1,5 @@
+edge-tts
+pandas
+requests
+websockets
+tzdata

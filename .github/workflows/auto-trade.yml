@@ -1,0 +1,185 @@
+name: FABOT auto-trade (KIS + Kiwoom)
+
+# 로컬 PC의 run_auto_trade_realtime.bat + Task Scheduler(FABOT_KR_Close/FABOT_US_Close)를
+# 그대로 클라우드로 옮긴 것 — 국내장 마감(15:19 KST)과 미국장 마감(04:50~06:00 KST,
+# 서머타임에 따라 달라짐) 근처에 같은 스크립트 두 개(KIS/키움)를 돌린다. PC가 꺼져있어도,
+# 화면이 잠겨있어도 실행된다.
+
+on:
+  schedule:
+    - cron: "19 6 * * 1-5"   # 15:19 KST 평일 (국내장 마감 직전)
+    # 2026-08-22 수정: 0-4(일~목 UTC 저녁)로는 금요일 저녁(UTC)이 빠져서, 미국장이
+    # 금요일 밤~토요일 새벽(KST)까지 열려있는 그 마지막 거래일 마감분을 못 받았다
+    # (인선님이 토요일 아침에 메시지가 안 왔다고 지적, 2026-08-22). 미국 정규장은
+    # 금요일까지 열리므로, 그 마감을 알리는 이 크론도 금요일 저녁(UTC)까지 돌아야
+    # 한다 — 토요일 저녁(UTC, 다음날 일요일 KST 새벽 몫)은 US 장이 없으니 그대로 뺀다.
+    #
+    # 2026-08-31 수정: 예전엔 04:50 KST에 딱 한 번만 돌았는데, 이 크론은 UTC 고정이라
+    # 서머타임을 못 따라간다 — 실제 마감은 여름(EDT) 05:00 KST, 겨울(EST) 06:00 KST로
+    # 달라진다. 크론을 계절별로 나누는 대신, 두 마감 시각을 둘 다 포함하도록 19:15~21:45
+    # UTC(04:15~06:45 KST) 사이 30분 간격으로 여러 번 돌리고, 실제로 "지금이 오늘의
+    # 진짜 마감 전후 20분인가"는 auto_trade_loop.py의 _within_tqqq_close_window()가
+    # zoneinfo로 정확히 계산해서 그때만 실행한다 — 나머지 실행은 조용히 건너뛴다.
+    - cron: "15,45 19,20,21 * * 0-5"
+  # 2026-09-07: GitHub Actions 자체 schedule이 몇 시간씩 밀리거나 아예 건너뛰는
+  # 문제가 실제로 관측됨(06:19 UTC 예정이 12:34, 21:xx, 23:xx UTC에 뒤늦게 실행됨).
+  # update-fg.yml에서 이미 검증된 방법(cron-job.org → repository_dispatch)을 그대로
+  # 적용한다. schedule은 혹시 몰라 그대로 남겨 두되(밀리더라도 안 도는 것보다 낫다),
+  # 실제 정시 실행은 이 repository_dispatch가 담당한다.
+  repository_dispatch:
+    types: [auto-trade]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true면 신호만 판정하고 실제 주문은 절대 넣지 않음"
+        type: boolean
+        default: true
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 키움 접근토큰이 실행마다 새로 발급되면 로컬 개발용 캐시가 무효화되는 문제가
+      # 있었다(update-fg.yml에서 이미 겪음) — 같은 방식으로 실행 간에 캐시를 이어받는다.
+      - name: Restore Kiwoom token cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .kiwoom_token_cache_demo_domestic.json
+          key: kiwoom-domestic-token-${{ github.run_id }}
+          restore-keys: |
+            kiwoom-domestic-token-
+
+      - name: Run KIS auto-trade (covered call + TQQQ)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          KIS_PAPER_APP_KEY: ${{ secrets.KIS_PAPER_APP_KEY }}
+          KIS_PAPER_APP_SECRET: ${{ secrets.KIS_PAPER_APP_SECRET }}
+          KIS_PAPER_STOCK: ${{ secrets.KIS_PAPER_STOCK }}
+        run: >
+          python auto_trade_loop.py --realtime
+          ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
+          2>&1 | tee kis_result.txt
+
+      - name: Run Kiwoom auto-trade (covered call + TQQQ)
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
+          KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
+          # 키움은 모의 키가 국내용/해외용으로 완전히 분리돼 있다 — TQQQ 실행에 필요(2026-09-18)
+          KIWOOM_PAPER_OVERSEAS_APP_KEY: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_KEY }}
+          KIWOOM_PAPER_OVERSEAS_APP_SECRET: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_SECRET }}
+        run: >
+          python auto_trade_loop_kiwoom.py --realtime
+          ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
+          2>&1 | tee kiwoom_result.txt
+
+      - name: Save Kiwoom token cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .kiwoom_token_cache_demo_domestic.json
+          key: kiwoom-domestic-token-${{ github.run_id }}
+
+      - name: Upload voice briefing
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trade-briefing-${{ github.run_id }}
+          path: output/*.mp3
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # 인선님 요청(2026-08-20, 2026-08-21 형식 변경): 실행될 때마다(대기든 실제 매매든)
+      # 텔레그램으로 결과를 보낸다. 각 스크립트 출력에서 "총 자산/F&G .../최종 신호/
+      # -> .../매매기록 저장" 줄만 골라서 요약한다 — 전체 로그를 그대로 보내면 너무
+      # 길어서 오히려 안 읽게 된다. "KIS"는 인선님 요청으로 "한국투자"라고 부른다.
+      - name: Notify Telegram
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # 2026-09-07: repository_dispatch로 오면 github.event.schedule이 비어 있어서
+          # 위 문자열 비교만으로는 "미국장용 트리거인지"를 알 수 없다. cron-job.org가
+          # client_payload.kind: "tqqq"를 실어 보내는 경우도 같이 인정한다.
+          TQQQ_WINDOW_CRON: ${{ github.event.schedule == '15,45 19,20,21 * * 0-5' || github.event.client_payload.kind == 'tqqq' }}
+        run: |
+          # 2026-08-31: TQQQ 마감 크론이 하루 6번으로 늘어나서(서머타임 대응), 그중
+          # "아직 마감 창 아님"으로 조용히 건너뛴 실행까지 매번 알리면 하루 5번씩 쓸데없는
+          # 알림이 간다. 이 여러 번 중 "아직 마감 창 아님"으로 건너뛴 실행만 조용히
+          # 넘어가고, 실제로 마감 창 안에서 평가된 실행은 매매가 있었든 "대기"였든
+          # 항상 알린다(2026-09-30 사용자 요청 — "마감에 어떻게 됐는지 알려줘야죠").
+          # "매매기록 저장" 유무가 아니라 "최종 신호:"가 찍혔는지(=마감 창 안에서 실제
+          # 판정까지 갔는지)로 구분한다 — 예전엔 "매매기록 저장"이 없으면(=대기 판정)
+          # 무조건 건너뛰어서, 마감 창 안에서 정상적으로 "대기" 판정이 나온 실행까지
+          # 조용히 묻혔었다.
+          if [ "$TQQQ_WINDOW_CRON" = "true" ] && ! grep -q "최종 신호:" kis_result.txt kiwoom_result.txt 2>/dev/null; then
+            echo "TQQQ 마감 창 밖이라 건너뛴 실행이라 텔레그램을 보내지 않습니다."
+            exit 0
+          fi
+
+          summarize() {
+            if [ -f "$1" ]; then
+              grep -E "총 자산|F&G [0-9]|최종 신호|-> |매매기록 저장|건너뜁니다|실행 창\(" "$1" || echo "(요약할 결과 줄을 못 찾음 — 로그 확인 필요)"
+            else
+              echo "(실행 로그 없음)"
+            fi
+          }
+          rules_line=$(python -c "import today_signal as t, cooldown as cd; b=t.BUY_THRESHOLDS; s=t.SELL_THRESHOLDS; c=t.COVERED_CALL_ZONE; print(f'[TQQQ] 매수 {b[2]}/{b[1]}/{b[0]} (25%/50%/100%) · 매도 {s[0]}/{s[1]} (50%/전량) · [커버드콜] F&G {c[0]}~{c[1]} 시 {t.COVERED_CALL_ALLOCATION:.0%} · 쿨다운 {cd.COOLDOWN_TRADING_DAYS}일(공통)')")
+
+          {
+            echo "🤖 FABOT 자동매매 실행 ($(date -u -d '+9 hours' '+%Y-%m-%d %H:%M') KST)"
+            echo "현재 규칙: $rules_line"
+            echo ""
+            echo "[한국투자]"
+            summarize kis_result.txt
+            echo ""
+            echo "[키움]"
+            summarize kiwoom_result.txt
+          } > telegram_message.txt
+
+          python - <<'PY'
+          import os
+          import requests
+
+          with open("telegram_message.txt", encoding="utf-8") as f:
+              text = f.read()
+
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          resp = requests.post(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              json={"chat_id": chat_id, "text": text[:4000]},
+              timeout=20,
+          )
+          resp.raise_for_status()
+          print("텔레그램 알림 전송 완료")
+          PY
+
+      # 스케줄 감시(워치독)용 신호 — 매매/발송 성공 여부와 무관하게 "워크플로가 돌긴
+      # 돌았다"는 것만 매번 남긴다(2026-09-10). 이게 실패해도 절대 이 잡을 실패시키지
+      # 않는다(|| echo) — 감시 기록 하나 때문에 실제 매매 실행이 "실패"로 표시되면 안 됨.
+      - name: Record heartbeat (schedule watchdog)
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          curl -sf -X POST "$SUPABASE_URL/rest/v1/schedule_heartbeats" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d '{"job":"auto_trade_workflow"}' \
+            || echo "heartbeat 기록 실패 — 무시하고 계속 진행"
