@@ -124,9 +124,17 @@ jobs:
           # 판정까지 갔는지)로 구분한다 — 예전엔 "매매기록 저장"이 없으면(=대기 판정)
           # 무조건 건너뛰어서, 마감 창 안에서 정상적으로 "대기" 판정이 나온 실행까지
           # 조용히 묻혔었다.
-          if [ "$TQQQ_WINDOW_CRON" = "true" ] && ! grep -q "최종 신호:" kis_result.txt kiwoom_result.txt 2>/dev/null; then
-            echo "TQQQ 마감 창 밖이라 건너뛴 실행이라 텔레그램을 보내지 않습니다."
-            exit 0
+          #
+          # 2026-10-01 수정: "최종 신호:"는 스크립트가 창 안팎과 상관없이 항상 찍는 줄이라
+          # (창 검사는 실제 주문 직전에만 한다), 위 기준으로는 하루 6번 전부 알림이 갔다
+          # (10-01 04:26·04:51·05:25·05:51 KST 네 번 수신). 알림 여부는 스크립트와 같은
+          # 함수(_within_tqqq_close_window, 오늘 진짜 마감 ±20분)로 직접 판정한다.
+          if [ "$TQQQ_WINDOW_CRON" = "true" ]; then
+            in_window=$(python -c "import auto_trade_loop as a; print('yes' if a._within_tqqq_close_window() else 'no')" 2>/dev/null || echo "unknown")
+            if [ "$in_window" = "no" ]; then
+              echo "TQQQ 마감 창 밖 실행이라 텔레그램을 보내지 않습니다."
+              exit 0
+            fi
           fi
 
           summarize() {
