@@ -1,0 +1,97 @@
+name: Render relay (briefing · balance)
+
+# 2026-10-01: Render 무료 서버가 잠들어 있을 때 cron-job.org가 직접 부르면, Render가
+# 보내는 "깨우는 중" 안내 페이지(x-render-routing: no-deploy)가 너무 커서 cron-job.org가
+# 1초 안에 연결을 끊는다("output too large"). 연결이 끊기니 서버가 끝까지 안 깨어나서
+# 깨우기 핑까지 포함해 9/30 이후 브리핑이 한 번도 안 나갔다(깨우기 16회 연속 실패).
+#
+# 그래서 cron-job.org는 GitHub만 부르고(repository_dispatch — 매번 204로 성공 중),
+# 서버가 깰 때까지 기다리는 일은 여기서 한다. curl은 기다려 주므로 서버가 실제로 깨어난다.
+#
+# cron-job.org 본문 예: {"event_type":"briefing","client_payload":{"session":"kr_open"}}
+#                    {"event_type":"balance-refresh"}
+
+on:
+  repository_dispatch:
+    types: [briefing, balance-refresh]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "kr_open / kr_close / us_open / us_close / balance"
+        required: true
+        type: choice
+        options: [kr_open, kr_close, us_open, us_close, balance]
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BRIEFING_BASE: https://fabot-daily-briefing-agent-r2m2.onrender.com
+      JOURNAL_BASE: https://fabot-trade-journal-q0k6.onrender.com
+      # 바깥에서 들어온 값은 run 안에 ${{ }}로 바로 넣지 않고 env로만 넘겨 아래에서 검사한다.
+      EVENT_TYPE: ${{ github.event.action }}
+      PAYLOAD_SESSION: ${{ github.event.client_payload.session }}
+      INPUT_TARGET: ${{ inputs.target }}
+    steps:
+      - name: Resolve target
+        id: target
+        run: |
+          if [ -n "$INPUT_TARGET" ]; then t="$INPUT_TARGET"
+          elif [ "$EVENT_TYPE" = "balance-refresh" ]; then t="balance"
+          else t="$PAYLOAD_SESSION"; fi
+          case "$t" in
+            kr_open|kr_close|us_open|us_close) echo "kind=briefing" >> "$GITHUB_OUTPUT"; echo "base=$BRIEFING_BASE" >> "$GITHUB_OUTPUT"; echo "health=/healthz" >> "$GITHUB_OUTPUT" ;;
+            balance) echo "kind=balance" >> "$GITHUB_OUTPUT"; echo "base=$JOURNAL_BASE" >> "$GITHUB_OUTPUT"; echo "health=/api/session" >> "$GITHUB_OUTPUT" ;;
+            *) echo "모르는 대상: '$t'"; exit 1 ;;
+          esac
+          echo "name=$t" >> "$GITHUB_OUTPUT"
+          echo "대상: $t"
+
+      # 첫 요청이 서버를 깨우고, 깰 때까지(보통 30초~1분) 10초 간격으로 다시 확인한다.
+      - name: Wake server (최대 약 4분)
+        env:
+          BASE: ${{ steps.target.outputs.base }}
+          HEALTH: ${{ steps.target.outputs.health }}
+        run: |
+          for i in $(seq 1 16); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 90 "$BASE$HEALTH" || echo 000)
+            echo "시도 $i: HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "서버가 깨어나지 않았습니다"; exit 1
+
+      - name: Run briefing
+        if: steps.target.outputs.kind == 'briefing'
+        env:
+          BASE: ${{ steps.target.outputs.base }}
+          SESSION: ${{ steps.target.outputs.name }}
+          SCHEDULE_SECRET: ${{ secrets.SCHEDULE_SECRET }}
+        run: |
+          if [ -z "$SCHEDULE_SECRET" ]; then echo "SCHEDULE_SECRET 저장소 비밀값이 없습니다"; exit 1; fi
+          code=$(curl -s -o resp.json -w '%{http_code}' -m 60 -X POST "$BASE/api/scheduled/$SESSION?token=$SCHEDULE_SECRET")
+          echo "HTTP $code"; head -c 300 resp.json; echo
+          [ "$code" = "200" ]
+
+      - name: Refresh balance
+        if: steps.target.outputs.kind == 'balance'
+        env:
+          BASE: ${{ steps.target.outputs.base }}
+        run: |
+          code=$(curl -s -o resp.json -w '%{http_code}' -m 120 -X POST "$BASE/api/balance/refresh")
+          echo "HTTP $code"; head -c 300 resp.json; echo
+          [ "$code" = "200" ]
+
+      # 조용히 빠지지 않게 — 실패하면 텔레그램으로 바로 알린다.
+      - name: Notify failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NAME: ${{ steps.target.outputs.name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+            --data-urlencode "text=🚨 FABOT 중계 실패: ${NAME:-알 수 없음} — $RUN_URL" > /dev/null
