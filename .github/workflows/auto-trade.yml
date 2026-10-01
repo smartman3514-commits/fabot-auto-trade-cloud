@@ -44,7 +44,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 2026-10-01: GitHub 자체 schedule은 보험이다(정시 실행은 cron-job.org → repository_dispatch).
+  # 보험이 늦게(예: 15:19 예정 → 15:39) 와서, 정시 실행이 이미 성공한 날에도 텔레그램이
+  # 한 번 더 갔다. schedule로 왔을 때 최근 40분 안에 정시 실행이 성공했거나 아직 도는
+  # 중이면 조용히 끝낸다. 정시 실행이 실패했거나 아예 안 왔으면 보험이 원래대로 대신 돈다.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          skip=false
+          if [ "$EVENT" = "schedule" ]; then
+            since=$(date -u -d '40 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+            n=$(gh run list -R "$GITHUB_REPOSITORY" --workflow auto-trade.yml --event repository_dispatch --limit 10 \
+                  --json createdAt,status,conclusion \
+                  --jq "[.[] | select(.createdAt >= \"$since\") | select(.status != \"completed\" or .conclusion == \"success\")] | length" \
+                || echo 0)
+            if [ "${n:-0}" -gt 0 ]; then skip=true; echo "최근 40분 안에 정시 실행이 있어 보험 실행은 건너뜁니다."; fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
   trade:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
