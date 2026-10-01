@@ -46,6 +46,7 @@ from zoneinfo import ZoneInfo
 sys.stdout.reconfigure(encoding="utf-8")
 
 import account_summary
+import crisis_plan
 import today_signal
 import voice_briefing
 from cooldown import log_trade
@@ -672,6 +673,18 @@ def execute_covered_call_buy(today_info: dict, dry_run: bool) -> dict:
              "qty": chaser.filled_qty, "price": holding["avg_price"]}
 
 
+def _print_shadow_plan() -> None:
+    """그림자 운영(2026-10-02~, 4주): 새 위기 매수 규칙(crisis_plan.py)이었다면 오늘 TQQQ를
+    얼마나 더 샀을지 한 줄로 남긴다. 주문은 절대 넣지 않는다. 실패해도 매매에는 영향 없음."""
+    try:
+        comp = account_summary.get_account_composition("Kiwoom")
+        total = comp["total_krw"]
+        print(crisis_plan.shadow_line(total, total * comp["tqqq_pct"] / 100, total * comp["cash_pct"] / 100,
+                                      _overseas_usd_cash()))
+    except Exception as exc:
+        print(f"그림자(새 규칙): 계산 실패 — {exc}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="오늘의 F&G 신호를 판정하고 실행 가능하면 키움 모의계좌에서 바로 매수까지 진행한다.")
     parser.add_argument("--dry-run", action="store_true", help="신호만 판정하고 실제 주문은 넣지 않음")
@@ -717,6 +730,9 @@ def main() -> None:
         outcome = execute_tqqq_sell(today_info, args.dry_run, args.ignore_window)
     else:
         print(f"-> 알 수 없는 액션({raw.action}) — 실행 안 함.")
+
+    if _within_tqqq_close_window():
+        _print_shadow_plan()
 
     text, audio_path = voice_briefing.synthesize_briefing(today_info, raw, result, outcome)
     print(f"\n음성 브리핑: {text}")
