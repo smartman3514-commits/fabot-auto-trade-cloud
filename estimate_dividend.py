@@ -12,6 +12,13 @@ kis_price_client.fetch_dividend_schedule 참고). 그래서 "연 15% 가정 월�
 잠깐 껐었는데, krwProfit이 애초에 현금을 안 보는 값이라 이중 계상이 아니었다 — 다시 켠다,
 2026-09-20.)
 
+보유수량(2026-10-03 수정): 예전엔 매매기록(trades)의 "매수"만 더해서 기준일 보유수량을
+계산했는데, (1) 매도를 빼지 않았고 (2) 대화로 낸 7월 테스트 주문처럼 매매기록에 안 남은
+체결이 있으면 실제보다 적게 잡혔다(KIS 실제 11,743주 vs 기록 11,353주 → 10월 배당
+165,750원 과소). 이제는 **증권사가 알려주는 지금 실제 보유수량**에서 기준일 이후의 매매기록
+(매수 − 매도)을 거꾸로 빼서 기준일 보유수량을 구한다. 증권사 조회가 실패할 때만 매매기록
+(매수 − 매도)으로 계산하고, 두 값이 다르면 그 차이를 로그에 남긴다.
+
 기록은 실제 지급일(pay_date)로 남긴다 — 이 스크립트를 실행한 날짜가 아니라. 같은
 계좌·같은 지급일 기록이 이미 있으면 다시 기록하지 않는다(중복 방지, 매달 5일 실행 중에
 과거분도 같이 훑기 때문에 안전하게 여러 번 돌려도 됨).
@@ -38,12 +45,13 @@ def _sb_headers(env: dict) -> dict:
     }
 
 
-def _get_buy_trades(env: dict, account: str) -> list[dict]:
+def _get_trades(env: dict, account: str) -> list[dict]:
+    """매수·매도 기록 전부(배당 기록 제외)."""
     url = f"{env['SUPABASE_URL']}/rest/v1/trades"
     params = {
-        "select": "trade_date,quantity",
+        "select": "trade_date,quantity,action",
         "ticker": f"eq.{COVERED_CALL_TRADE_KEY}",
-        "action": "eq.buy",
+        "action": "in.(buy,sell)",
         "account": f"eq.{account}",
         "order": "trade_date.asc",
     }
@@ -52,8 +60,35 @@ def _get_buy_trades(env: dict, account: str) -> list[dict]:
     return resp.json()
 
 
-def _shares_held_at(buy_trades: list[dict], as_of_date: str) -> float:
-    return sum(float(t["quantity"]) for t in buy_trades if t["trade_date"] <= as_of_date)
+def _signed(t: dict) -> float:
+    return float(t["quantity"]) * (1 if t["action"] == "buy" else -1)
+
+
+def _shares_held_at(trades: list[dict], as_of_date: str) -> float:
+    """매매기록만으로 계산한 기준일 보유수량(매수 − 매도)."""
+    return sum(_signed(t) for t in trades if t["trade_date"] <= as_of_date)
+
+
+def _broker_shares_now(account: str) -> float | None:
+    """증권사가 알려주는 지금 실제 보유수량. 조회 실패 시 None."""
+    try:
+        if account == "KIS 모의투자":
+            from live_order_executor import get_holding
+            h = get_holding(COVERED_CALL_STOCK_CODE)
+        else:
+            import auto_trade_loop_kiwoom
+            h = auto_trade_loop_kiwoom._current_holding()
+        return float(h["qty"]) if h else 0.0
+    except Exception as exc:
+        print(f"{account}: 증권사 보유수량 조회 실패({exc}) — 매매기록으로 계산합니다.")
+        return None
+
+
+def _shares_at_record(trades: list[dict], broker_now: float | None, record_date: str) -> float:
+    """지금 실제 보유수량 − 기준일 이후 매매기록 = 기준일 보유수량. 증권사 값이 없으면 매매기록만."""
+    if broker_now is None:
+        return _shares_held_at(trades, record_date)
+    return broker_now - sum(_signed(t) for t in trades if t["trade_date"] > record_date)
 
 
 def _existing_dividend_pay_dates(env: dict, account: str) -> set:
@@ -98,22 +133,27 @@ def main() -> int:
     ok = True
     for account in ACCOUNTS:
         try:
-            buy_trades = _get_buy_trades(env, account)
-            if not buy_trades:
+            trades = _get_trades(env, account)
+            if not trades:
                 print(f"{account}: 472150 매수 기록 없음 — 건너뜁니다.")
                 continue
             already = _existing_dividend_pay_dates(env, account)
+            broker_now = _broker_shares_now(account)
+            if broker_now is not None:
+                ledger_now = _shares_held_at(trades, "9999-12-31")
+                if abs(ledger_now - broker_now) > 0.5:
+                    print(f"{account}: ⚠️ 매매기록 {ledger_now:,.0f}주 vs 실제 보유 {broker_now:,.0f}주 — 실제 보유 기준으로 계산합니다(매매기록 보정 필요).")
             for div in schedule:
                 if div["pay_date"] in already:
                     continue
-                shares = _shares_held_at(buy_trades, div["record_date"])
+                shares = _shares_at_record(trades, broker_now, div["record_date"])
                 if shares <= 0:
                     continue  # 기준일 이후에 처음 매수한 계좌는 그 배당 대상이 아님
                 amount = round(shares * div["per_share"])
                 if amount <= 0:
                     continue
                 memo = (f"실제 배당(예탁원 배당일정 API, 기준일 {div['record_date']} 주당 "
-                        f"{div['per_share']:,.0f}원 × 그날 보유 {shares:,.0f}주, 지급일 {div['pay_date']})")
+                        f"{div['per_share']:,.0f}원 × 그날 실제 보유 {shares:,.0f}주, 지급일 {div['pay_date']})")
                 _log_dividend(env, account, div["pay_date"], amount, memo)
                 print(f"{account}: {div['pay_date']} 배당 {amount:,}원 기록 완료 "
                       f"(기준일 {div['record_date']}, {shares:,.0f}주 × {div['per_share']:,.0f}원)")
