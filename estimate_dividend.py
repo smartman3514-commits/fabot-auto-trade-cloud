@@ -143,9 +143,12 @@ def main() -> int:
                 ledger_now = _shares_held_at(trades, "9999-12-31")
                 if abs(ledger_now - broker_now) > 0.5:
                     print(f"{account}: ⚠️ 매매기록 {ledger_now:,.0f}주 vs 실제 보유 {broker_now:,.0f}주 — 실제 보유 기준으로 계산합니다(매매기록 보정 필요).")
+            today_s = date.today().isoformat()
             for div in schedule:
                 if div["pay_date"] in already:
                     continue
+                if div["pay_date"] > today_s:
+                    continue  # 2026-10-03: 평일 매일 실행으로 바꿔서, 지급일이 아직 안 된 배당은 기다린다
                 shares = _shares_at_record(trades, broker_now, div["record_date"])
                 if shares <= 0:
                     continue  # 기준일 이후에 처음 매수한 계좌는 그 배당 대상이 아님

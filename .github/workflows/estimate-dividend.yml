@@ -1,13 +1,18 @@
-name: FABOT 추정 배당 기록 (매월 5일)
+name: FABOT 배당 기록 (평일 매일 확인)
 
 # 모의계좌는 실제 배당이 안 나온다(2026-09-19 확인) — 그래서 매월 5일에 커버드콜(472150)
 # 평가금액의 1.25%(연 15% 가정, 대시보드 "예상 월 현금흐름"과 동일 가정)를 추정 배당으로
 # trades 테이블에 기록한다. 시각까지 정확할 필요는 없는 월간 작업이라, 다른 스케줄(auto-trade.yml)
 # 처럼 cron-job.org repository_dispatch를 쓰지 않고 GitHub Actions 자체 schedule만 쓴다.
 
+# 2026-10-03 사용자 요청: "배당이 들어오면 요청하기 전에 자동으로 기록해 줘요" — 매월 5일
+# 한 번만 돌면 실제 지급일(보통 매달 2일 무렵)보다 며칠 늦게 기록된다. 그래서 평일 매일
+# 확인하고, 지급일이 지난 배당만 기록한다(같은 지급일은 다시 기록하지 않아서 매일 돌려도 안전).
+# 텔레그램은 새로 기록했거나 실패했을 때만 보낸다(아무 일 없는 날은 조용히).
 on:
   schedule:
-    - cron: "10 0 5 * *"  # 매월 5일 00:10 UTC = 09:10 KST
+    - cron: "30 1 * * 1-5"  # 평일 01:30 UTC = 10:30 KST
+    - cron: "30 7 * * 1-5"  # 평일 07:30 UTC = 16:30 KST (오전에 늦게 반영된 경우 대비)
   workflow_dispatch: {}
 
 jobs:
@@ -55,8 +60,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          if [ -f dividend_result.txt ] && ! grep -qE "기록 완료|실패|경고|⚠️" dividend_result.txt; then
+            echo "새로 기록한 배당이 없어 텔레그램을 보내지 않습니다."
+            exit 0
+          fi
           {
-            echo "💰 FABOT 추정 배당 기록 ($(date -u -d '+9 hours' '+%Y-%m-%d %H:%M') KST)"
+            echo "💰 FABOT 배당 기록 ($(date -u -d '+9 hours' '+%Y-%m-%d %H:%M') KST)"
             echo ""
             cat dividend_result.txt
           } > telegram_message.txt
