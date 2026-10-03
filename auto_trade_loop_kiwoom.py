@@ -47,6 +47,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 import account_summary
 import crisis_plan
+import fill_price
 import today_signal
 import voice_briefing
 from cooldown import log_trade
@@ -193,6 +194,21 @@ class KiwoomChaseOrder:
     """REST 폴링으로 가격을 지켜보며 체결될 때까지 정정을 반복하는 상태 머신
     (live_order_executor.ChaseOrder/overseas_order_executor.OverseasChaseOrder와 같은 아이디어,
     키움 API 필드명에 맞게 구현 — ord_no/oso_qty는 2026-08-14 테스트 주문으로 실측 확인함)."""
+
+    # 2026-10-03: 정정하면 주문번호가 바뀌므로, 이번 실행에서 쓴 주문번호를 전부 모아 둔다 —
+    # 체결가 조회(fill_price.py)에서 이 번호들의 체결만 골라 가중평균한다.
+    @property
+    def order(self):
+        return self.__dict__.get("_order")
+
+    @order.setter
+    def order(self, value):
+        self.__dict__["_order"] = value
+        if value:
+            n = value.get("odno") or value.get("ord_no")
+            nos = self.__dict__.setdefault("order_nos", [])
+            if n and n not in nos:
+                nos.append(n)
 
     def __init__(self, stk_cd: str, side: str, total_qty: int,
                  max_reprices: int, max_seconds: float, poll_interval: float):
@@ -347,6 +363,21 @@ class KiwoomOverseasChaseOrder:
     _ORD_NO_KEYS = ("ord_no", "orig_ord_no", "ordr_no")
     _REMAIN_KEYS = ("oso_qty", "rmn_qty", "unfl_qty", "ord_rmnq")
     _UNKNOWN = object()  # "필드명을 못 알아봤다" — None(전량 체결)과 구분해야 한다
+
+    # 2026-10-03: 정정하면 주문번호가 바뀌므로, 이번 실행에서 쓴 주문번호를 전부 모아 둔다 —
+    # 체결가 조회(fill_price.py)에서 이 번호들의 체결만 골라 가중평균한다.
+    @property
+    def order(self):
+        return self.__dict__.get("_order")
+
+    @order.setter
+    def order(self, value):
+        self.__dict__["_order"] = value
+        if value:
+            n = value.get("odno") or value.get("ord_no")
+            nos = self.__dict__.setdefault("order_nos", [])
+            if n and n not in nos:
+                nos.append(n)
 
     def __init__(self, side: str, total_qty: int,
                  max_reprices: int, max_seconds: float, poll_interval: float,
@@ -556,19 +587,25 @@ def execute_tqqq_buy(today_info: dict, dry_run: bool, ignore_window: bool = Fals
     if holding is None:
         print("경고: 체결 후 보유내역 조회에서 해당 종목을 못 찾음 — 매매기록을 남기지 못했습니다.")
         return _not_executed("체결 후 보유내역 조회에 실패했습니다")
+    # 2026-10-03: 평균단가가 아니라 이번 체결가로 기록한다 — 키움 해외는 체결내역 조회 대신
+    # 매수 전후 평균단가×수량 차이로 역산한다(실패 시 평균단가).
+    fill = fill_price.safe(fill_price.from_holding_delta, before, holding, chaser.filled_qty)
+    buy_price = round(fill, 4) if fill else holding["avg_price"]
+    if fill:
+        print(f"  실제 체결가(역산) ${fill:,.4f} (계좌 평균단가 ${holding['avg_price']:,.4f})")
 
     log_trade(
         ticker=TQQQ_TICKER,
         action="buy",
         quantity=chaser.filled_qty,
-        price=holding["avg_price"],
+        price=buy_price,
         fg_score=today_info["score"],
         memo="자동실행(auto_trade_loop_kiwoom.py), 해외주식(TQQQ) REST 폴링 추격주문",
         account=KIWOOM_ACCOUNT_LABEL,
     )
-    print(f"매매기록 저장 완료: buy {chaser.filled_qty}주 @ ${holding['avg_price']} (ticker='{TQQQ_TICKER}')")
+    print(f"매매기록 저장 완료: buy {chaser.filled_qty}주 @ ${buy_price} (ticker='{TQQQ_TICKER}')")
     return {"executed": True, "action": "buy", "ticker": TQQQ_TICKER,
-            "qty": chaser.filled_qty, "price": holding["avg_price"]}
+            "qty": chaser.filled_qty, "price": buy_price}
 
 
 def execute_tqqq_sell(today_info: dict, dry_run: bool, ignore_window: bool = False) -> dict:
@@ -658,19 +695,24 @@ def execute_covered_call_buy(today_info: dict, dry_run: bool) -> dict:
     if holding is None:
         print("경고: 체결 후 보유내역 조회에서 해당 종목을 못 찾음 — 매매기록을 남기지 못했습니다.")
         return _not_executed("체결 후 보유내역 조회에 실패했습니다")
+    # 2026-10-03: 평균단가가 아니라 이번 주문의 실제 체결가로 기록한다(실패 시 평균단가).
+    fill = fill_price.safe(fill_price.kiwoom_domestic, COVERED_CALL_STOCK_CODE, getattr(chaser, "order_nos", []))
+    buy_price = round(fill, 4) if fill else holding["avg_price"]
+    if fill:
+        print(f"  실제 체결가 {fill:,.2f}원 (계좌 평균단가 {holding['avg_price']:,.2f}원)")
 
     log_trade(
         ticker=COVERED_CALL_TRADE_KEY,
         action="buy",
         quantity=chaser.filled_qty,
-        price=holding["avg_price"],
+        price=buy_price,
         fg_score=today_info["score"],
         memo=f"자동실행(auto_trade_loop_kiwoom.py), 신호상 명목종목='{today_signal.COVERED_CALL_TICKER}'",
         account=KIWOOM_ACCOUNT_LABEL,
     )
-    print(f"매매기록 저장 완료: buy {chaser.filled_qty}주 @ {holding['avg_price']}원 (ticker='{COVERED_CALL_TRADE_KEY}')")
+    print(f"매매기록 저장 완료: buy {chaser.filled_qty}주 @ {buy_price}원 (ticker='{COVERED_CALL_TRADE_KEY}')")
     return {"executed": True, "action": "buy", "ticker": COVERED_CALL_TRADE_KEY,
-             "qty": chaser.filled_qty, "price": holding["avg_price"]}
+             "qty": chaser.filled_qty, "price": buy_price}
 
 
 def _print_shadow_plan() -> None:

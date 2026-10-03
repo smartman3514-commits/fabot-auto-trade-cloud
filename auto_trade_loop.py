@@ -35,6 +35,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 import account_summary
 import crisis_plan
+import fill_price
 import today_signal
 import voice_briefing
 from cooldown import log_trade
@@ -181,6 +182,11 @@ async def _execute_covered_call_buy(today_info: dict, dry_run: bool) -> dict:
     if avg_price is None:
         print("경고: 체결 후 보유내역 조회에서 해당 종목을 못 찾음 — 매매기록을 남기지 못했습니다.")
         return _not_executed("체결 후 보유내역 조회에 실패했습니다")
+    # 2026-10-03: 평균단가가 아니라 이번 주문의 실제 체결가로 기록한다(실패 시 평균단가).
+    fill = fill_price.safe(fill_price.kis_domestic, COVERED_CALL_STOCK_CODE, getattr(chaser, "order_nos", []))
+    if fill:
+        print(f"  실제 체결가 {fill:,.2f}원 (계좌 평균단가 {avg_price:,.2f}원)")
+        avg_price = round(fill, 4)
 
     log_trade(
         ticker=COVERED_CALL_TRADE_KEY,
@@ -251,6 +257,12 @@ async def _execute_tqqq_buy(today_info: dict, dry_run: bool) -> dict:
     if avg_price is None:
         print("경고: 체결 후 보유내역 조회에서 해당 종목을 못 찾음 — 매매기록을 남기지 못했습니다.")
         return _not_executed("체결 후 보유내역 조회에 실패했습니다")
+    # 2026-10-03: KIS 모의 해외 평균단가는 당일 갱신도 안 된다(10-01 실제 $79.06인데 $71.489로
+    # 기록됨) — 체결내역에서 이번 주문의 실제 체결가를 가져온다(실패 시 평균단가).
+    fill = fill_price.safe(fill_price.kis_overseas, today_signal.TQQQ_TICKER, TQQQ_EXCG, getattr(chaser, "order_nos", []))
+    if fill:
+        print(f"  실제 체결가 ${fill:,.4f} (계좌 평균단가 ${avg_price:,.4f})")
+        avg_price = round(fill, 4)
 
     log_trade(
         ticker=today_signal.TQQQ_TICKER,

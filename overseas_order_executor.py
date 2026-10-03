@@ -241,6 +241,21 @@ def get_overseas_holding(pdno: str, excg: str) -> dict | None:
 class OverseasChaseOrder:
     """REST 폴링으로 가격을 지켜보며 체결될 때까지 정정을 반복하는 상태 머신 (해외주식판)."""
 
+    # 2026-10-03: 정정하면 주문번호가 바뀌므로, 이번 실행에서 쓴 주문번호를 전부 모아 둔다 —
+    # 체결가 조회(fill_price.py)에서 이 번호들의 체결만 골라 가중평균한다.
+    @property
+    def order(self):
+        return self.__dict__.get("_order")
+
+    @order.setter
+    def order(self, value):
+        self.__dict__["_order"] = value
+        if value:
+            n = value.get("odno") or value.get("ord_no")
+            nos = self.__dict__.setdefault("order_nos", [])
+            if n and n not in nos:
+                nos.append(n)
+
     def __init__(self, pdno: str, excg: str, side: str, total_qty: int,
                  max_reprices: int, max_seconds: float, poll_interval: float):
         self.pdno = pdno
