@@ -12,6 +12,7 @@ PoC(dividend-tax-briefing)에서 이미 검증했던 그대로 재사용한다. 
 """
 
 import asyncio
+import os
 from datetime import date
 from pathlib import Path
 
@@ -53,7 +54,10 @@ async def synthesize_briefing_async(today_info: dict, raw, result: dict, outcome
     이미 asyncio 이벤트 루프 안에 있는 호출부(auto_trade_loop.py)용."""
     text = build_briefing_text(today_info, raw, result, outcome)
     OUTPUT_DIR.mkdir(exist_ok=True)
-    out_path = OUTPUT_DIR / f"trade_briefing_{date.today().strftime('%Y%m%d')}.mp3"
+    # 2026-10-06: auto-trade.yml이 KIS·키움을 동시에 돌리면서 같은 파일명에 함께 쓰게 됐다 —
+    # 워크플로가 VOICE_BRIEFING_TAG(kis/kiwoom)를 넘겨 파일을 나눈다. 없으면 예전 이름 그대로.
+    tag = os.environ.get("VOICE_BRIEFING_TAG", "")
+    out_path = OUTPUT_DIR / f"trade_briefing_{date.today().strftime('%Y%m%d')}{'_' + tag if tag else ''}.mp3"
     await _synthesize(text, out_path)
     return text, out_path
 

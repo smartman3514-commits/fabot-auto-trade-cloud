@@ -95,32 +95,34 @@ jobs:
           restore-keys: |
             kiwoom-domestic-token-
 
-      - name: Run KIS auto-trade (covered call + TQQQ)
+      # 2026-10-06: KIS와 키움을 동시에 실행한다. 예전엔 KIS 단계가 끝나야 키움이 시작했는데,
+      # 15:19 KIS 국내 주문이 15:20 동시호가에 걸려 15:30 체결까지 11분을 기다리는 사이
+      # 키움 차례가 장 마감(15:30:39) 뒤로 밀려 "호가 0"으로 커버드콜 매수를 놓쳤다.
+      # 미국장 TQQQ도 같은 구조라 KIS 추격(최대 5분)이 길어지면 키움이 마감을 놓칠 수 있다.
+      # 두 스크립트는 서로 다른 계좌·토큰 캐시·결과 파일을 쓰고, 음성 파일만 TAG로 나눈다.
+      - name: Run KIS + Kiwoom auto-trade in parallel (covered call + TQQQ)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           KIS_PAPER_APP_KEY: ${{ secrets.KIS_PAPER_APP_KEY }}
           KIS_PAPER_APP_SECRET: ${{ secrets.KIS_PAPER_APP_SECRET }}
           KIS_PAPER_STOCK: ${{ secrets.KIS_PAPER_STOCK }}
-        run: >
-          python auto_trade_loop.py --realtime
-          ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
-          2>&1 | tee kis_result.txt
-
-      - name: Run Kiwoom auto-trade (covered call + TQQQ)
-        if: always()
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
           KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
           # 키움은 모의 키가 국내용/해외용으로 완전히 분리돼 있다 — TQQQ 실행에 필요(2026-09-18)
           KIWOOM_PAPER_OVERSEAS_APP_KEY: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_KEY }}
           KIWOOM_PAPER_OVERSEAS_APP_SECRET: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_SECRET }}
-        run: >
-          python auto_trade_loop_kiwoom.py --realtime
-          ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
-          2>&1 | tee kiwoom_result.txt
+          DRY_RUN_FLAG: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
+        run: |
+          VOICE_BRIEFING_TAG=kis python -u auto_trade_loop.py --realtime $DRY_RUN_FLAG > kis_result.txt 2>&1 &
+          kis_pid=$!
+          VOICE_BRIEFING_TAG=kiwoom python -u auto_trade_loop_kiwoom.py --realtime $DRY_RUN_FLAG > kiwoom_result.txt 2>&1 &
+          kiwoom_pid=$!
+          kis_rc=0; kiwoom_rc=0
+          wait $kis_pid || kis_rc=$?
+          wait $kiwoom_pid || kiwoom_rc=$?
+          echo "===== 한국투자 (exit $kis_rc) ====="; cat kis_result.txt
+          echo "===== 키움 (exit $kiwoom_rc) ====="; cat kiwoom_result.txt
 
       - name: Save Kiwoom token cache
         if: always()
