@@ -7,11 +7,17 @@
 배당(estimate_dividend.py)과 같은 "현금흐름" 성격이라 대시보드가 이미 action="dividend"로
 집계하는 로직(총수익, 계좌 장기 추이 차트)을 그대로 타게 하되, ticker를 CASH_INTEREST_TRADE_KEY_*로
 구분해서 표에서는 배당과 별도 줄로 보이게 한다(app.js CASH_INTEREST_TICKERS와 반드시 같은 문자열).
+
+같은 계좌·같은 통화의 이번 달 이자가 이미 있으면 다시 기록하지 않는다(2026-10-05 사고 — 계정
+이전 뒤 남은 예전 저장소 2곳에서도 이 작업이 같이 돌아 KIS·키움 이자가 두 번씩 기록됐다).
 """
 import argparse
 import sys
+from datetime import date
 
-from cooldown import log_trade
+import requests
+
+from cooldown import _load_journal_env, log_trade
 from kiwoom_client import get_domestic_cash_balance, get_overseas_cash_balance as kiwoom_get_overseas_cash_balance
 from live_order_executor import _inquire_balance_raw
 from overseas_order_executor import get_overseas_cash_balance as kis_get_overseas_cash_balance
@@ -49,8 +55,25 @@ def _kiwoom_cash_parts() -> tuple[float, float]:
     return domestic, float(settled)
 
 
+def _already_logged_this_month(account: str, ticker: str) -> bool:
+    env = _load_journal_env()
+    month_start = date.today().replace(day=1).isoformat()
+    resp = requests.get(
+        f"{env['SUPABASE_URL']}/rest/v1/trades",
+        params={"select": "id", "ticker": f"eq.{ticker}", "action": "eq.dividend",
+                "account": f"eq.{account}", "trade_date": f"gte.{month_start}"},
+        headers={"apikey": env["SUPABASE_SERVICE_KEY"], "Authorization": f"Bearer {env['SUPABASE_SERVICE_KEY']}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return len(resp.json()) > 0
+
+
 def _log_interest(account: str, ticker: str, currency_label: str, cash_amount: float,
                    krw_amount: float, dry_run: bool = False) -> None:
+    if _already_logged_this_month(account, ticker):
+        print(f"{account}({currency_label}): 이번 달 이자가 이미 기록돼 있어 건너뜁니다.")
+        return
     amount = round(krw_amount * MONTHLY_INTEREST_RATE)
     if amount <= 0:
         print(f"{account}({currency_label}): 현금 {cash_amount:,.2f} — 이자 대상 없음, 건너뜁니다.")
