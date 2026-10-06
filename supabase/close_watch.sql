@@ -74,7 +74,10 @@ begin
 
   select decrypted_secret into v_token from vault.decrypted_secrets where name = 'fabot_telegram_bot_token';
   select decrypted_secret into v_chat from vault.decrypted_secrets where name = 'fabot_telegram_chat_id';
-  if v_token is null or v_chat is null then
+  -- 10-06 설치 때 .env에서 복사한 값 끝에 줄바꿈이 섞여 "invalid URL"이 났다. 공백·줄바꿈·꺾쇠는 지운다.
+  v_token := regexp_replace(v_token, '[[:space:]<>]', '', 'g');
+  v_chat := regexp_replace(v_chat, '[[:space:]<>]', '', 'g');
+  if v_token is null or v_chat is null or v_token = '' or v_chat = '' then
     return 'error: Vault에 fabot_telegram_bot_token / fabot_telegram_chat_id가 없음';
   end if;
 
