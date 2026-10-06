@@ -147,6 +147,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
           # 2026-09-07: repository_dispatch로 오면 github.event.schedule이 비어 있어서
           # 위 문자열 비교만으로는 "미국장용 트리거인지"를 알 수 없다. cron-job.org가
           # client_payload.kind: "tqqq"를 실어 보내는 경우도 같이 인정한다.
@@ -220,6 +223,28 @@ jobs:
           )
           resp.raise_for_status()
           print("텔레그램 알림 전송 완료")
+
+          # 2026-10-06: GitHub Actions 장애(04:11~07:49 KST)로 미국장 마감 실행이 전부 취소돼
+          # 알림이 조용히 빠졌다. 마감 알림을 실제로 보낸 뒤 "오늘 마감 알림 완료" 표시를
+          # 남기고, Supabase 안의 감시(pg_cron, supabase/close_watch.sql)가 이 표시가 없으면
+          # 대체 알림을 보낸다 — GitHub·Render가 멈춰도 감시는 살아 있게. 수동 실행은 남기지 않는다.
+          if os.environ.get("EVENT_NAME") != "workflow_dispatch":
+              market = "us" if os.environ.get("TQQQ_WINDOW_CRON") == "true" else "kr"
+              try:
+                  requests.post(
+                      f"{os.environ['SUPABASE_URL']}/rest/v1/schedule_heartbeats",
+                      headers={
+                          "apikey": os.environ["SUPABASE_SERVICE_KEY"],
+                          "Authorization": f"Bearer {os.environ['SUPABASE_SERVICE_KEY']}",
+                          "Content-Type": "application/json",
+                          "Prefer": "return=minimal",
+                      },
+                      json={"job": f"close_notified_{market}"},
+                      timeout=15,
+                  ).raise_for_status()
+                  print(f"마감 알림 완료 표시 기록: close_notified_{market}")
+              except Exception as exc:  # 표시 실패는 매매·알림을 실패시키지 않는다
+                  print(f"마감 알림 완료 표시 기록 실패 — 대체 알림이 갈 수 있음: {exc}")
           PY
 
       # 스케줄 감시(워치독)용 신호 — 매매/발송 성공 여부와 무관하게 "워크플로가 돌긴
