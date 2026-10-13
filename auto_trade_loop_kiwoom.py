@@ -52,6 +52,7 @@ import today_signal
 import voice_briefing
 from cooldown import log_trade
 from kiwoom_client import (
+    abs_price,
     amend_domestic_order,
     amend_overseas_order,
     cancel_domestic_order,
@@ -151,6 +152,8 @@ def _tqqq_window_message(now: datetime | None = None) -> str:
 
 
 def _not_executed(note: str) -> dict:
+    # 텔레그램 요약이 "-> " 줄을 집어 가므로, 신호가 났는데 실행이 안 된 이유가 알림에 보이게 한다.
+    print(f"-> 실행 안 함: {note}")
     return {"executed": False, "note": note}
 
 
@@ -172,7 +175,7 @@ def _sweep_price(book: dict, side: str, qty: int) -> int:
     cumulative = 0
     last_price = 0
     for _, price_key, qty_key in levels:
-        price = int(book.get(price_key, "0") or "0")
+        price = int(abs_price(book.get(price_key, "0") or "0"))  # 하락일엔 "-17500"처럼 부호가 붙어 옴
         level_qty = int(book.get(qty_key, "0") or "0")
         if price <= 0:
             continue
@@ -307,7 +310,7 @@ class KiwoomChaseOrder:
 
             book = get_domestic_orderbook(self.stk_cd, mode="demo")
             tick_key = "sel_fpr_bid" if self.side == "buy" else "buy_fpr_bid"
-            tick_price = int(book.get(tick_key, "0") or "0")
+            tick_price = int(abs_price(book.get(tick_key, "0") or "0"))
             stale = (
                 tick_price > 0
                 and ((self.side == "buy" and tick_price > self.order["price"])
@@ -666,7 +669,9 @@ def execute_covered_call_buy(today_info: dict, dry_run: bool) -> dict:
     cash = int(cash_data["ord_alow_amt"])
 
     book = get_domestic_orderbook(COVERED_CALL_STOCK_CODE, mode="demo")
-    ref_price = int(book.get("sel_fpr_bid", "0") or "0")
+    # 2026-10-13 수정: 키움 호가는 전일 대비 하락이면 "-17500"처럼 부호가 붙어 온다. 부호를 떼지 않아
+    # 하락일마다 "호가 0"으로 잘못 판단해 커버드콜 매수가 빠졌다(10-06·10-12·10-13 확인).
+    ref_price = int(abs_price(book.get("sel_fpr_bid", "0") or "0"))
     if ref_price <= 0:
         print("호가가 0입니다 — 국내 정규장 시간(09:00~15:30 KST)이 아니라서 실행할 수 없습니다.")
         return _not_executed("국내 정규장 시간이 아니라 호가를 받을 수 없어 실행하지 않았습니다")
