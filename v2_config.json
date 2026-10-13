@@ -1,0 +1,7 @@
+{
+  "start_date": "2026-10-19",
+  "usd_capital": null,
+  "krw_capital": null,
+  "fx": null,
+  "note": "시작일에 레거시 TQQQ 591주를 판 뒤 달러 예수금으로 usd_capital을 채운다. krw_capital = usd_capital / 0.9 x 0.1 x fx"
+}
