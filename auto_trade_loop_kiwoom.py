@@ -763,7 +763,7 @@ def main() -> None:
     print(f"원 판정: {raw.label}")
     print(f"최종 신호: {result['final_label']}")
 
-    outcome = _not_executed("실행 대상 액션이 아니었습니다")
+    outcome = {"executed": False, "note": "실행 대상 액션이 아니었습니다"}  # 기본값 — 알림 줄은 찍지 않음
 
     if raw.action == "wait":
         print("-> 대기. 실행 없음.")
