@@ -330,12 +330,16 @@ def _overseas_usd_cash() -> float:
     return float(data.get("d0_usd_fx_entr", "0") or "0")
 
 
-def _tqqq_holding() -> dict | None:
-    data = get_overseas_balance(stk_cd=TQQQ_TICKER, stex_tp=TQQQ_EXCG, mode="demo")
+def _overseas_holding(ticker: str, exchange: str) -> dict | None:
+    data = get_overseas_balance(stk_cd=ticker, stex_tp=exchange, mode="demo")
     for h in data.get("result_list", []):
-        if h.get("stk_cd") == TQQQ_TICKER:
+        if h.get("stk_cd") == ticker:
             return {"qty": int(h["poss_qty"]), "avg_price": float(h["frgn_stk_book_uv"])}
     return None
+
+
+def _tqqq_holding() -> dict | None:
+    return _overseas_holding(TQQQ_TICKER, TQQQ_EXCG)
 
 
 def _overseas_sweep_price(book: dict, side: str, qty: int) -> float:
@@ -384,7 +388,10 @@ class KiwoomOverseasChaseOrder:
 
     def __init__(self, side: str, total_qty: int,
                  max_reprices: int, max_seconds: float, poll_interval: float,
-                 qty_before: int = 0):
+                 qty_before: int = 0, ticker: str = TQQQ_TICKER, exchange: str = TQQQ_EXCG):
+        # 2026-10-15: v2(TQQQ·QLD·QQQ·버크셔·SOXL)에서도 쓰도록 종목·거래소를 받는다(기본값은 예전과 같은 TQQQ/ND).
+        self.ticker = ticker
+        self.exchange = exchange
         self._qty_before = qty_before
         self._use_holding_fallback = False
         self.side = side
@@ -408,7 +415,7 @@ class KiwoomOverseasChaseOrder:
         신호가 자주 오지 않는데 '체결 수량을 세는 방법'이 틀렸다는 이유로 매수를
         통째로 놓치는 것이 훨씬 큰 손해이기 때문이다(2026-09-18 사용자 지적)."""
         try:
-            data = get_overseas_unfilled_orders(stk_cd=TQQQ_TICKER, stex_tp=TQQQ_EXCG, mode="demo")
+            data = get_overseas_unfilled_orders(stk_cd=self.ticker, stex_tp=self.exchange, mode="demo")
         except Exception as exc:
             print(f"  경고: 미체결 조회 API 실패({exc}) — 보유수량 변화로 대신 셉니다.")
             return self._UNKNOWN
@@ -428,7 +435,7 @@ class KiwoomOverseasChaseOrder:
     def _filled_from_holding(self) -> int:
         """보유수량 증감으로 체결량을 잰다(대체 수단). 정산 반영이 늦으면 실제보다
         적게 나올 수 있어서, 한 번 올라간 값은 내려가지 않게 max로만 갱신한다."""
-        holding = _tqqq_holding()
+        holding = _overseas_holding(self.ticker, self.exchange)
         now_qty = holding["qty"] if holding else 0
         moved = (now_qty - self._qty_before) if self.side == "buy" else (self._qty_before - now_qty)
         return max(0, min(self.total_qty, moved))
@@ -454,12 +461,12 @@ class KiwoomOverseasChaseOrder:
             if self.done:
                 return
 
-        book = get_overseas_orderbook(TQQQ_TICKER, mode="demo")
+        book = get_overseas_orderbook(self.ticker, exchange=self.exchange, mode="demo")
         price = round(_overseas_sweep_price(book, self.side, self._remaining()), 2)
 
         if self.order is None:
-            result = place_overseas_order(TQQQ_TICKER, self.side, self._remaining(),
-                                          price=price, exchange=TQQQ_EXCG, mode="demo")
+            result = place_overseas_order(self.ticker, self.side, self._remaining(),
+                                          price=price, exchange=self.exchange, mode="demo")
             if result.get("return_code") != 0:
                 raise RuntimeError(f"주문 실패: {result.get('return_msg')}")
             self.order = {"ord_no": result["ord_no"], "price": price}
@@ -471,8 +478,8 @@ class KiwoomOverseasChaseOrder:
 
         print(f"  가격 이동 감지 — 정정주문 (${self.order['price']} -> ${price})")
         try:
-            result = amend_overseas_order(self.order["ord_no"], TQQQ_TICKER, price=price,
-                                          exchange=TQQQ_EXCG, mode="demo")
+            result = amend_overseas_order(self.order["ord_no"], self.ticker, price=price,
+                                          exchange=self.exchange, mode="demo")
             if result.get("return_code") != 0:
                 raise RuntimeError(result.get("return_msg", "알 수 없는 오류"))
         except Exception as exc:  # noqa: BLE001
@@ -488,8 +495,8 @@ class KiwoomOverseasChaseOrder:
         if self.order is None:
             return
         try:
-            result = cancel_overseas_order(self.order["ord_no"], TQQQ_TICKER,
-                                           exchange=TQQQ_EXCG, mode="demo")
+            result = cancel_overseas_order(self.order["ord_no"], self.ticker,
+                                           exchange=self.exchange, mode="demo")
             if result.get("return_code") != 0:
                 raise RuntimeError(result.get("return_msg", "알 수 없는 오류"))
             print(f"  남은 미체결 주문(주문번호 {self.order['ord_no']})을 취소했습니다.")
@@ -514,7 +521,7 @@ class KiwoomOverseasChaseOrder:
 
             time.sleep(self.poll_interval)
 
-            book = get_overseas_orderbook(TQQQ_TICKER, mode="demo")
+            book = get_overseas_orderbook(self.ticker, exchange=self.exchange, mode="demo")
             tick_key = "sel_1bid" if self.side == "buy" else "buy_1bid"
             tick_price = abs(float(book.get(tick_key, "0") or "0"))
             stale = (
@@ -745,6 +752,17 @@ def main() -> None:
              "자동 스케줄에는 절대 기본으로 켜지 말 것",
     )
     args = parser.parse_args()
+
+    # 2026-10-19부터 키움은 FA v2(규칙서 10-15판: FA곡선+RSI 가속, 버크셔 사다리, 커버드콜 반반)로만 주문한다.
+    # 옛 규칙(TQQQ 25/50/100%, 커버드콜 10% 단일)은 시작일부터 키움에서 끈다. KIS는 옛 규칙 그대로(인선 결정 10-13).
+    import fabot_v2
+    if fabot_v2.is_live(fabot_v2.load_config()):
+        try:
+            fabot_v2.run_live(dry_run=args.dry_run)
+        except Exception as exc:
+            print(f"-> v2 오류로 중단: {exc}")
+            raise
+        return
 
     today_info = today_signal.get_cnn_score() if args.realtime else today_signal.get_today_score()
     raw = today_signal.judge_raw_signal(today_info["score"])

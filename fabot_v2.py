@@ -1,11 +1,14 @@
-"""FABOT v2 (규칙서 2026-10-13 오후판) — 키움 모의계좌에서 돌리는 새 버전의 장부·규칙.
+"""FA v2 (규칙서 2026-10-15판) — 키움 모의계좌에서 돌리는 새 버전의 장부·규칙·주문.
+
+2026-10-15 추가: FA곡선 RSI 가속(TQQQ 일봉 RSI(14) ≤ 30이면 목표 비중 +40%p), 버크셔 사다리식 매수,
+실제 주문 실행(run_live). SOXL 수익 30분할은 아직 연결 전(현금 보유).
 
 인선 결정(2026-10-13): KIS는 지금 버전 그대로, 키움은 이 새 버전으로 실제 주문을 낸다.
 키움 계좌에는 옛 보유분(TIGER 배당커버드콜 약 6,700주, 원화 약 3.5억)이 섞여 있으므로,
 새 버전의 칸별 현금·보유는 **trades 표에서 account='키움 v2'로 남긴 기록만으로** 매번
 처음부터 다시 계산한다(상태 파일 없음 — crisis_plan과 같은 방식).
 
-이 파일은 계산만 한다(주문 없음). 주문은 auto_trade_loop_kiwoom.py가 이 계획을 받아 낸다.
+시작일(v2_config.json start_date)부터 auto_trade_loop_kiwoom.py가 옛 규칙 대신 run_live()를 부른다.
 
     python fabot_v2.py              # 지금 시각 기준 "오늘 할 일"을 계산해 보여 준다(주문 없음)
 """
@@ -58,13 +61,18 @@ S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
 CAPE_K = 1.7
 SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 72, 77, 4
-DCA_WEEKS = 26
+DCA_WEEKS = 26          # (옛 규칙 — 10-15부터 버크셔는 사다리식)
+RSI_LEN, RSI_ACCEL_TH, RSI_ACCEL_ADD = 14, 30, .40      # FA곡선 RSI 가속 (TQQQ 일봉)
+LAD_RSI, LAD_UNIT, LAD_GAP, LAD_DEADLINE = 40, .10, 21, 252
+LAD_DOWN = [(.90, 1.5), (.85, 2.0), (.80, 2.5), (.75, 3.0), (.70, 3.5), (.65, 4.0), (.60, 4.5), (.55, 5.0), (.50, 5.5)]
+LAD_UP = [1 + .05 * k for k in range(2, 11)]           # +10%, +15%, … +50% → 1회분씩
+OVERSEAS_FEE_MARGIN = .011
 PEACE_LO, PEACE_HI, PEACE_FRAC, PEACE_GAP_DAYS = 35, 65, .10, 3
 
 
 # ── 시작 설정 ────────────────────────────────────────────────────────────────
 
-def load_config() -> dict:
+def _load_config_file() -> dict:
     """{"start_date": "2026-10-19", "usd_capital": 숫자|null, "krw_capital": 숫자|null, "fx": 숫자|null}
     usd_capital이 비어 있으면 아직 시작 전(미리보기)이다."""
     if not CONFIG_PATH.exists():
@@ -72,9 +80,37 @@ def load_config() -> dict:
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
+def load_config() -> dict:
+    """미리보기(--start)로 덮어쓴 값이 있으면 그것을, 없으면 v2_config.json을 읽는다."""
+    return dict(CONFIG_OVERRIDE) if CONFIG_OVERRIDE else _load_config_file()
+
+
 def is_live(cfg: dict, today: date | None = None) -> bool:
+    """시작일 당일부터 True. 재원은 resolve_capital()이 매번 같은 값으로 다시 계산한다(상태 파일 없음)."""
     today = today or datetime.now(KST).date()
-    return bool(cfg.get("usd_capital")) and cfg.get("start_date") and today >= date.fromisoformat(cfg["start_date"])
+    return bool(cfg.get("start_date")) and today >= date.fromisoformat(cfg["start_date"])
+
+
+def _close_on(ticker: str, day: date) -> tuple[date, float]:
+    closes = fetch_daily_closes(ticker, "3mo")
+    vals = [(d, c) for d, c in closes if d <= day]
+    if not vals:
+        raise RuntimeError(f"{ticker} {day} 종가를 못 찾음")
+    return vals[-1]
+
+
+def resolve_capital(cfg: dict) -> dict:
+    """재원 = 시작 전 달러 예수금 + 옛 TQQQ 수량 × price_date 종가, 원화 칸 = 달러 재원 ÷ 0.9 × 0.1 × 환율.
+    usd_capital이 적혀 있으면 그 값을 쓴다. 같은 입력이면 언제 다시 계산해도 같은 값이 나온다."""
+    if cfg.get("usd_capital"):
+        fx = float(cfg.get("fx") or crisis_plan.fetch_usdkrw())
+        return {**cfg, "fx": fx, "krw_capital": cfg.get("krw_capital") or cfg["usd_capital"] / USD_WEIGHT * KRW_WEIGHT * fx}
+    pd_ = date.fromisoformat(cfg["price_date"])
+    tq_d, tq = _close_on("TQQQ", pd_)
+    _, fx = _close_on("KRW=X", pd_)
+    usd = float(cfg["usd_cash_at_start"]) + int(cfg["legacy_tqqq_qty"]) * tq
+    return {**cfg, "usd_capital": usd, "krw_capital": usd / USD_WEIGHT * KRW_WEIGHT * fx, "fx": fx,
+            "basis": f"달러 ${float(cfg['usd_cash_at_start']):,.2f} + TQQQ {cfg['legacy_tqqq_qty']}주 × ${tq:.2f}({tq_d} 종가), 환율 {fx:,.1f}"}
 
 
 # ── 장부 ────────────────────────────────────────────────────────────────────
@@ -128,7 +164,26 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
     return pos
 
 
-# ── 공포 점수 S (파봇곡선) ────────────────────────────────────────────────────
+def rsi_wilder(values: list[float], n: int = RSI_LEN) -> float:
+    """마지막 값의 와일더 RSI(백테스트·규칙서와 같은 식)."""
+    a = np.asarray(values, dtype=float)
+    d = np.diff(a)
+    up = np.clip(d, 0, None); dn = np.clip(-d, 0, None)
+    au = ad = None
+    for u, w in zip(up, dn):
+        au = u if au is None else au + (u - au) / n
+        ad = w if ad is None else ad + (w - ad) / n
+    if not ad:
+        return 100.0
+    return float(100 - 100 / (1 + au / ad))
+
+
+def closes_with_today(closes: list[tuple[date, float]], price_now: float, today_us: date) -> list[float]:
+    vals = [c for d, c in closes if d < today_us]
+    return vals + [price_now]
+
+
+# ── 공포 점수 S (FA곡선) ────────────────────────────────────────────────────
 
 def fetch_daily_closes(ticker: str, rng: str = "3y") -> list[tuple[date, float]]:
     r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={rng}&interval=1d",
@@ -201,8 +256,53 @@ class Order:
     note: str
 
 
+def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: float, start: date, today: date) -> dict:
+    """사다리를 시작일부터 오늘까지 일봉으로 다시 돌려(상태 없음) '지금까지 샀어야 할 금액'을 구하고,
+    실제로 산 금액과의 차이만큼 산다. 빠진 날이 있어도 다음 실행에서 따라잡는다."""
+    u = LAD_UNIT * b.capital
+    days = [(d, c) for d, c in hist if start <= d < today] + [(today, price_now)]
+    full = [c for d, c in hist if d < today] + [price_now]
+    first_i = len(full) - len(days)
+    p1 = None; done = set(); last = None; cum = 0.0; note = ""; fired_today = False
+    for i, (d, c) in enumerate(days):
+        units = 0.0
+        if i >= LAD_DEADLINE:
+            units = float("inf"); why = "1년 기한 — 남은 돈 전부"
+        elif p1 is None:
+            r = rsi_wilder(full[:first_i + i + 1])
+            if r <= LAD_RSI:
+                units = 1.0; p1 = c; why = f"RSI {r:.0f} ≤ {LAD_RSI} 첫 매수(기준가 ${c:.2f})"
+        else:
+            hits = [m for lv, m in LAD_DOWN if lv not in done and c <= p1 * lv]
+            for lv, m in LAD_DOWN:
+                if lv not in done and c <= p1 * lv:
+                    done.add(lv)
+            ups = [lv for lv in LAD_UP if ("u", lv) not in done and c >= p1 * lv]
+            for lv in ups:
+                done.add(("u", lv))
+            units = sum(hits) + len(ups)
+            why = f"기준가 ${p1:.2f} 대비 {c / p1 - 1:+.0%}"
+            if units == 0 and last is not None and i - last >= LAD_GAP:
+                units = 1.0; why = f"한 달({LAD_GAP}거래일) 동안 매수 없음"
+        if units:
+            cum = b.capital if units == float("inf") else cum + units * u
+            last = i
+            if d == today:
+                fired_today = True; note = f"사다리: {why}"
+    want = min(b.capital, cum)
+    spent = sum(q * px for _, q, px in b.buys)
+    short = min(b.cash, want - spent)
+    if short >= price_now:
+        if not fired_today:
+            note = f"사다리: 지금까지 사야 했던 ${want:,.0f} 중 ${spent:,.0f}만 삼 — 모자란 만큼 따라잡기"
+        return {"order": short, "note": note, "p1": p1}
+    if p1 is None and not note:
+        note = f"사다리: 버크셔 RSI가 {LAD_RSI} 이하로 내려오기를 기다리는 중(시작 후 {len(days) - 1}거래일, 1년 지나면 전부 매수)"
+    return {"order": 0.0, "note": note, "p1": p1}
+
+
 def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
-            prices: dict[str, float], today: date) -> list[Order]:
+            prices: dict[str, float], today: date, brk_hist: list | None = None, start: date | None = None) -> list[Order]:
     orders: list[Order] = []
     # TQQQ 매도 (F&G 72 절반 / 77 전부, 판 뒤 4거래일 쉼)
     tq = pos["TQQQ"]
@@ -214,7 +314,11 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
             q = tq.qty if fg_now >= SELL_ALL else math.floor(tq.qty / 2)
             if q > 0:
                 orders.append(Order("TQQQ", "sell", 0, q, f"F&G {fg_now:.0f} ≥ {SELL_ALL if fg_now >= SELL_ALL else SELL_HALF} → {'전부' if fg_now >= SELL_ALL else '절반'} 매도"))
-    # 파봇곡선 (TQQQ·QLD·QQQ)
+    # FA곡선 (TQQQ·QLD·QQQ) + RSI 가속
+    target = fear["target"]
+    if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH:
+        target = min(1.0, target + RSI_ACCEL_ADD)
+    fear = {**fear, "target": target}
     for k in ("TQQQ", "QLD", "QQQ"):
         p = pos[k]; px = prices[k]; inv = p.qty * px; tot = p.cash + inv
         if tot <= 0 or any(o.sleeve == k and o.side == "sell" for o in orders):
@@ -227,17 +331,13 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
             continue
         amt = min(p.cash, fear["target"] * tot - inv)
         if amt > 0:
-            orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {fear['target']:.0%} (S {fear['S']:.2f})"))
-    # 버크셔: 26주 동안 매주 한 번, 남은 돈 ÷ 남은 주
-    b = pos["BRK"]
-    done = len(b.buys)
-    this_week = today.isocalendar()[:2]
-    bought_this_week = any(d.isocalendar()[:2] == this_week for d, _, _ in b.buys)
-    if done < DCA_WEEKS and not bought_this_week and b.cash > 0:
-        amt = b.cash / (DCA_WEEKS - done)
-        orders.append(Order("BRK", "buy", amt, None, f"6개월 나눠 사기 {done + 1}/{DCA_WEEKS}주차"))
-    elif done >= DCA_WEEKS and b.cash > prices["BRK"]:
-        orders.append(Order("BRK", "buy", b.cash, None, "6개월 나눠 사기 끝 — 남은 돈(연말 리밸런싱분 등) 매수"))
+            orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {fear['target']:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH else "") + ")"))
+    # 버크셔: 사다리식 (규칙서 10-15판)
+    lad = brk_ladder_plan(pos["BRK"], brk_hist, prices["BRK"], start, today)
+    if lad["order"] > 0:
+        orders.append(Order("BRK", "buy", lad["order"], None, lad["note"]))
+    elif lad["note"]:
+        orders.append(Order("BRK", "hold", 0, None, lad["note"]))
     # SOXL 무한매수법 — 4단계에서 연결
     orders.append(Order("SOXL", "hold", 0, None, "무한매수법은 LOC 시험 뒤 연결 예정(지금은 현금 보유)"))
     return orders
@@ -272,60 +372,197 @@ def summary_lines(pos: dict[str, Position], prices: dict[str, float], fx: float)
             "칸별 비중: " + " · ".join(parts)]
 
 
-def main() -> None:
-    import argparse
-    import today_signal
+# ── 상황 모으기 ──────────────────────────────────────────────────────────────
+
+def gather(cfg: dict, trades: list[dict]) -> dict:
     import kiwoom_client as K
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--market", choices=["us", "kr", "both"], default="both")
-    args = ap.parse_args()
-
-    cfg = load_config()
-    today = datetime.now(KST).date()
-    fx = crisis_plan.fetch_usdkrw()
-    live = is_live(cfg, today)
-    if not live:
-        # 시작 전 미리보기: 지금 키움 달러 + TQQQ 평가액을 새 버전 재원으로 가정
-        cash = float(K.get_overseas_cash_balance(mode="demo").get("d0_usd_fx_entr", 0) or 0)
-        bal = K.get_overseas_balance(stk_cd="TQQQ", stex_tp="ND", mode="demo")
-        tq_qty = sum(int(h["poss_qty"]) for h in bal.get("result_list", []) if h.get("stk_cd") == "TQQQ")
-        tq_px = K.abs_price(K.get_overseas_quote("TQQQ", mode="demo")["cur_prc"])
-        usd_cap = cash + tq_qty * tq_px
-        cfg = {"start_date": cfg.get("start_date"), "usd_capital": usd_cap,
-               "krw_capital": usd_cap / USD_WEIGHT * KRW_WEIGHT * fx, "fx": fx}
-        print(f"그림자(v2 미리보기, 시작일 {cfg['start_date']}): 재원 가정 ${usd_cap:,.0f} "
-              f"(달러 ${cash:,.0f} + TQQQ {tq_qty}주 × ${tq_px:.2f}) + 원화 {cfg['krw_capital']:,.0f}원")
-        trades = []
-    else:
-        trades = fetch_v2_trades()
+    import today_signal
+    from zoneinfo import ZoneInfo
+    today_kst = datetime.now(KST).date()
+    today_us = datetime.now(ZoneInfo("America/New_York")).date()
     pos = build_ledger(cfg, trades)
-
     prices = {}
-    for s in SLEEVES:
-        if s.currency == "USD":
-            prices[s.key] = K.abs_price(K.get_overseas_quote(s.code, exchange=s.exchange, mode="demo")["cur_prc"])
+    for s_ in SLEEVES:
+        if s_.currency == "USD":
+            prices[s_.key] = K.abs_price(K.get_overseas_quote(s_.code, exchange=s_.exchange, mode="demo")["cur_prc"])
         else:
-            prices[s.key] = K.abs_price(K.get_domestic_quote(s.code, mode="demo")["cur_prc"])
-
+            prices[s_.key] = K.abs_price(K.get_domestic_quote(s_.code, mode="demo")["cur_prc"])
     info = today_signal.get_cnn_score()
     hist = crisis_plan.fetch_cnn_history()
-    fear = fear_score(info["score"], hist, prices["TQQQ"], fetch_daily_closes("TQQQ"))
-    cape = cape_block()
-    tag = "그림자(v2)" if not live else "v2"
-    print(f"{tag} F&G {info['score']:.1f} · S {fear['S']:.2f} → 목표 투자 비중 {fear['target']:.0%} "
-          f"(TQQQ 2년 고점 ${fear['hi2']:.2f} 대비 −{fear['dd']:.0%}, 공포 {fear['run']}일) · "
-          + (f"CAPE {cape['cape']} / 기준선 {cape['line']:.1f} → {'막힘' if cape['hot'] else '열림'}" if cape['cape'] else cape['error']))
-    for line in summary_lines(pos, prices, fx):
+    tq_closes = fetch_daily_closes("TQQQ")
+    fear = fear_score(info["score"], hist, prices["TQQQ"], tq_closes)
+    fear["rsi"] = rsi_wilder(closes_with_today(tq_closes, prices["TQQQ"], today_us))
+    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": cape_block(),
+            "brk_hist": fetch_daily_closes("BRK-B", "2y"), "today_kst": today_kst, "today_us": today_us}
+
+
+def print_status(tag: str, cfg: dict, ctx: dict) -> None:
+    f = ctx["fear"]
+    c = ctx["cape"]
+    acc = f" → RSI 가속 +{RSI_ACCEL_ADD:.0%}p" if f["rsi"] <= RSI_ACCEL_TH else ""
+    cape_txt = (f"CAPE {c['cape']} / 기준선 {c['line']:.1f} → {'막힘' if c['hot'] else '열림'}"
+                if c["cape"] else c["error"])
+    print(f"{tag} F&G {ctx['fg']:.1f} · S {f['S']:.2f} → 목표 투자 비중 {f['target']:.0%} · "
+          f"TQQQ RSI {f['rsi']:.0f}{acc} · {cape_txt}")
+    for line in summary_lines(ctx["pos"], ctx["prices"], cfg["fx"]):
         print(f"{tag} {line}")
-    orders = []
-    if args.market in ("us", "both"):
-        orders += plan_us(pos, info["score"], fear, cape, prices, today)
-    if args.market in ("kr", "both"):
-        orders += plan_kr(pos, info["score"], today)
+
+
+# ── 실제 주문 ───────────────────────────────────────────────────────────────
+
+def _say(msg: str) -> None:
+    print(f"-> v2 {msg}")   # 텔레그램 요약이 "-> " 줄을 집어 간다
+
+
+def _overseas_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
+    import kiwoom_client as K
+    import fill_price
+    from cooldown import log_trade
+    from auto_trade_loop_kiwoom import KiwoomOverseasChaseOrder, _overseas_holding
+    book = K.get_overseas_orderbook(sl.code, exchange=sl.exchange, mode="demo")
+    ref = abs(float(book.get("sel_1bid", "0") or "0"))
+    if ref <= 0:
+        _say(f"{sl.key} 매수 못 함 — 호가 0(미국 정규장 아님)")
+        return
+    qty = int(amount * (1 - OVERSEAS_FEE_MARGIN) // ref)
+    if qty < 1:
+        _say(f"{sl.key} 매수 건너뜀 — ${amount:,.0f}로는 1주(${ref:,.2f})도 못 삼")
+        return
+    if dry_run:
+        _say(f"{sl.key} 매수 {qty}주 @ 약 ${ref:,.2f} (dry-run, 주문 안 냄) — {note}")
+        return
+    before = _overseas_holding(sl.code, sl.exchange)
+    ch = KiwoomOverseasChaseOrder("buy", qty, max_reprices=15, max_seconds=240.0, poll_interval=3.0,
+                                  qty_before=before["qty"] if before else 0, ticker=sl.code, exchange=sl.exchange)
+    ch.run()
+    if ch.filled_qty <= 0:
+        _say(f"{sl.key} 매수 주문이 체결되지 않음")
+        return
+    after = _overseas_holding(sl.code, sl.exchange)
+    fill = fill_price.safe(fill_price.from_holding_delta, before, after, ch.filled_qty) or ref
+    log_trade(ticker=sl.ledger, action="buy", quantity=ch.filled_qty, price=round(fill, 4), fg_score=fg,
+              memo=f"v2 자동실행 — {note}", account=V2_ACCOUNT)
+    _say(f"{sl.key} 매수 {ch.filled_qty}/{qty}주 @ ${fill:,.2f} — {note}")
+    print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {ch.filled_qty}주")
+
+
+def _overseas_sell(sl: Sleeve, qty: int, fg: float, dry_run: bool, note: str, account: str = V2_ACCOUNT) -> None:
+    import kiwoom_client as K
+    from cooldown import log_trade
+    from auto_trade_loop_kiwoom import KiwoomOverseasChaseOrder, _overseas_holding
+    book = K.get_overseas_orderbook(sl.code, exchange=sl.exchange, mode="demo")
+    ref = abs(float(book.get("buy_1bid", "0") or "0"))
+    if ref <= 0:
+        _say(f"{sl.key} 매도 못 함 — 호가 0(미국 정규장 아님)")
+        return
+    if dry_run:
+        _say(f"{sl.key} 매도 {qty}주 @ 약 ${ref:,.2f} (dry-run, 주문 안 냄) — {note}")
+        return
+    before = _overseas_holding(sl.code, sl.exchange)
+    ch = KiwoomOverseasChaseOrder("sell", qty, max_reprices=15, max_seconds=240.0, poll_interval=3.0,
+                                  qty_before=before["qty"] if before else 0, ticker=sl.code, exchange=sl.exchange)
+    ch.run()
+    if ch.filled_qty <= 0:
+        _say(f"{sl.key} 매도 주문이 체결되지 않음")
+        return
+    px = ch.order["price"] if ch.order else ref
+    log_trade(ticker=sl.ledger, action="sell", quantity=ch.filled_qty, price=round(px, 4), fg_score=fg,
+              memo=f"v2 자동실행 — {note} (가격은 마지막 주문가)", account=account)
+    _say(f"{sl.key} 매도 {ch.filled_qty}/{qty}주 @ 약 ${px:,.2f} — {note}")
+    print(f"매매기록 저장 완료: {account} sell {sl.ledger} {ch.filled_qty}주")
+
+
+def _domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
+    import kiwoom_client as K
+    import fill_price
+    from cooldown import log_trade
+    from auto_trade_loop_kiwoom import KiwoomChaseOrder
+    book = K.get_domestic_orderbook(sl.code, mode="demo")
+    ref = int(K.abs_price(book.get("sel_fpr_bid", "0") or "0"))
+    if ref <= 0:
+        _say(f"{sl.key} 매수 못 함 — 호가 0(국내 정규장 아님)")
+        return
+    qty = int(amount // ref)
+    if qty < 1:
+        _say(f"{sl.key} 매수 건너뜀 — {amount:,.0f}원으로는 1주({ref:,}원)도 못 삼")
+        return
+    if dry_run:
+        _say(f"{sl.key} 매수 {qty}주 @ 약 {ref:,}원 (dry-run, 주문 안 냄) — {note}")
+        return
+    ch = KiwoomChaseOrder(sl.code, "buy", qty, max_reprices=60, max_seconds=600.0, poll_interval=3.0)
+    ch.run()
+    if ch.filled_qty <= 0:
+        _say(f"{sl.key} 매수 주문이 체결되지 않음")
+        return
+    fill = fill_price.safe(fill_price.kiwoom_domestic, sl.code, getattr(ch, "order_nos", [])) or ref
+    log_trade(ticker=sl.ledger, action="buy", quantity=ch.filled_qty, price=round(fill, 4), fg_score=fg,
+              memo=f"v2 자동실행 — {note}", account=V2_ACCOUNT)
+    _say(f"{sl.key} 매수 {ch.filled_qty}/{qty}주 @ {fill:,.0f}원 — {note}")
+    print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {ch.filled_qty}주")
+
+
+def _sell_legacy_tqqq(cfg: dict, pos: dict[str, Position], fg: float, dry_run: bool) -> None:
+    """계좌의 TQQQ 중 v2 장부에 없는 몫(옛 규칙이 산 것)을 판다. 상태 없이 '실제 보유 − v2 장부'로 센다."""
+    from auto_trade_loop_kiwoom import _overseas_holding, KIWOOM_ACCOUNT_LABEL
+    h = _overseas_holding("TQQQ", "ND")
+    legacy = (h["qty"] if h else 0) - int(round(pos["TQQQ"].qty))
+    if legacy <= 0:
+        return
+    if legacy != int(cfg.get("legacy_tqqq_qty") or 0):
+        _say(f"주의: 옛 TQQQ가 {legacy}주로 설정값({cfg.get('legacy_tqqq_qty')}주)과 다름 — 재원 계산을 확인하세요")
+    sl = next(x for x in SLEEVES if x.key == "TQQQ")
+    _overseas_sell(sl, legacy, fg, dry_run, f"시작일 정리: 옛 규칙 TQQQ {legacy}주 매도(재원으로 씀)",
+                   account=KIWOOM_ACCOUNT_LABEL)
+
+
+def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
+    """auto_trade_loop_kiwoom.py가 시작일부터 부른다. 실행 창에 따라 미국/국내 할 일을 계산하고 주문한다."""
+    from auto_trade_loop_kiwoom import _within_tqqq_close_window, _within_domestic_close_window
+    market = force_market or ("us" if _within_tqqq_close_window()
+                              else "kr" if _within_domestic_close_window() else None)
+    cfg = resolve_capital(load_config())
+    print(f"=== [키움 v2] FA 새 규칙 (시작 {cfg['start_date']}) ===")
+    print(f"v2 재원 ${cfg['usd_capital']:,.0f} + 원화 {cfg['krw_capital']:,.0f}원 ({cfg.get('basis', '설정값')})")
+    if market is None:
+        print("최종 신호: v2 실행 창 밖 — 건너뜁니다")
+        return
+    trades = fetch_v2_trades()
+    ctx = gather(cfg, trades)
+    print_status("v2", cfg, ctx)
+    print(f"최종 신호: v2 {'미국장' if market == 'us' else '국내장'} 마감 실행" + (" (dry-run)" if dry_run else ""))
+    sl = {x.key: x for x in SLEEVES}
+    if market == "us":
+        _sell_legacy_tqqq(cfg, ctx["pos"], ctx["fg"], dry_run)
+        orders = plan_us(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today_us"],
+                         brk_hist=ctx["brk_hist"], start=date.fromisoformat(cfg["start_date"]))
+    else:
+        orders = plan_kr(ctx["pos"], ctx["fg"], ctx["today_kst"])
+    if not any(o.side in ("buy", "sell") for o in orders):
+        _say("오늘 살 것·팔 것 없음")
     for o in orders:
-        cur = "$" if pos[o.sleeve].sleeve.currency == "USD" else ""
-        amt = f" {cur}{o.amount:,.0f}{'' if cur else '원'}" if o.side == "buy" else (f" {o.qty:g}주" if o.side == "sell" else "")
-        print(f"{tag} {o.sleeve} {({'buy': '매수', 'sell': '매도', 'hold': '대기'})[o.side]}{amt} — {o.note}")
+        if o.side == "hold":
+            _say(f"{o.sleeve} 대기 — {o.note}")
+        elif o.side == "sell":
+            _overseas_sell(sl[o.sleeve], int(o.qty), ctx["fg"], dry_run, o.note)
+        elif sl[o.sleeve].currency == "USD":
+            _overseas_buy(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
+        else:
+            _domestic_buy(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
+
+
+CONFIG_OVERRIDE: dict = {}
+
+
+def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser(description="FA v2 — 오늘 할 일 미리보기(기본, 주문 없음) 또는 실행")
+    ap.add_argument("--market", choices=["us", "kr"], help="실행 창과 상관없이 이 시장 기준으로 계산")
+    ap.add_argument("--live", action="store_true", help="실제 모의 주문을 낸다(기본은 주문 없이 보여 주기만)")
+    ap.add_argument("--start", help="미리보기용 시작일 바꾸기(예: 오늘 날짜로 시험)")
+    args = ap.parse_args()
+    if args.start:
+        CONFIG_OVERRIDE.update({**_load_config_file(), "start_date": args.start})
+    run_live(dry_run=not args.live, force_market=args.market)
 
 
 if __name__ == "__main__":

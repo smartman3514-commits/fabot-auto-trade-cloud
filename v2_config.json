@@ -1,7 +1,10 @@
 {
   "start_date": "2026-10-19",
+  "usd_cash_at_start": 56031.54,
+  "legacy_tqqq_qty": 591,
+  "price_date": "2026-10-16",
   "usd_capital": null,
   "krw_capital": null,
   "fx": null,
-  "note": "시작일에 레거시 TQQQ 591주를 판 뒤 달러 예수금으로 usd_capital을 채운다. krw_capital = usd_capital / 0.9 x 0.1 x fx"
+  "note": "재원 = usd_cash_at_start + legacy_tqqq_qty x TQQQ price_date 종가, 환율 = price_date 종가(KRW=X). 시작 전 옛 규칙이 TQQQ를 사고팔면 usd_cash_at_start·legacy_tqqq_qty를 고칠 것. 첫 미국장 창에서 옛 TQQQ를 판다."
 }
