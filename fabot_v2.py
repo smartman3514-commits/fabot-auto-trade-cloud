@@ -43,12 +43,33 @@ class Sleeve:
     rule: str         # curve / curve_sell / infinite / dca / peace
 
 
+# 버크셔 칸에 넣을 종목 — v2_config.json "defense_stock": "BRK" | "SCHD" (2026-10-16 인선 요청).
+# 칸 이름(key)은 "BRK" 그대로 두고 주문 코드·장부 이름·시세만 바꾼다. 사다리 규칙은 같다.
+# 이미 산 종목이 있는데 바꾸면 예전 종목은 장부에서 빠지므로, 바꾸기 전에 먼저 판다(plan_us가 막는다).
+DEFENSE_CHOICES = {
+    "BRK": {"code": "BRKb", "exchange": "NY", "ledger": "BRK.B", "yahoo": "BRK-B", "name": "버크셔"},
+    "SCHD": {"code": "SCHD", "exchange": "NY", "ledger": "SCHD", "yahoo": "SCHD", "name": "SCHD"},
+}
+
+
+def _defense_key() -> str:
+    try:
+        v = json.loads(CONFIG_PATH.read_text(encoding="utf-8")).get("defense_stock") if CONFIG_PATH.exists() else None
+    except (OSError, ValueError):
+        v = None
+    v = str(v or "BRK").upper()
+    return v if v in DEFENSE_CHOICES else "BRK"
+
+
+DEFENSE = DEFENSE_CHOICES[_defense_key()]
+STRAY_DEFENSE: dict[str, float] = {}   # 칸 종목을 바꾼 뒤에도 남아 있는 예전 종목 수량
+
 SLEEVES = [
     Sleeve("TQQQ", "TQQQ", "ND", "TQQQ", .15, "USD", "curve_sell"),
     Sleeve("SOXL", "SOXL", "NY", "SOXL", .10, "USD", "infinite"),
     Sleeve("QLD", "QLD", "NY", "QLD", .15, "USD", "curve"),
     Sleeve("QQQ", "QQQ", "ND", "QQQ", .30, "USD", "curve"),
-    Sleeve("BRK", "BRKb", "NY", "BRK.B", .20, "USD", "dca"),
+    Sleeve("BRK", DEFENSE["code"], DEFENSE["exchange"], DEFENSE["ledger"], .20, "USD", "dca"),
     Sleeve("CC_DIV", "472150", "KRX", "TIGER 배당커버드콜액티브(472150)", .05, "KRW", "peace"),
     Sleeve("CC_NAS", "486290", "KRX", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", .05, "KRW", "peace"),
 ]
@@ -151,7 +172,12 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
         cap = usd_cap * s.weight / USD_WEIGHT if s.currency == "USD" else krw_cap * s.weight / KRW_WEIGHT
         pos[s.key] = Position(s, cap, cash=cap)
     by_ledger = {s.ledger: s.key for s in SLEEVES}
+    others = {c["ledger"] for c in DEFENSE_CHOICES.values()} - {DEFENSE["ledger"]}
+    STRAY_DEFENSE.clear()
     for t in trades:
+        if t["ticker"] in others and t["action"] in ("buy", "sell"):
+            q = float(t["quantity"])
+            STRAY_DEFENSE[t["ticker"]] = STRAY_DEFENSE.get(t["ticker"], 0.0) + (q if t["action"] == "buy" else -q)
         k = by_ledger.get(t["ticker"])
         if k is None or t["action"] not in ("buy", "sell"):
             continue
@@ -297,7 +323,7 @@ def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: floa
             note = f"사다리: 지금까지 사야 했던 ${want:,.0f} 중 ${spent:,.0f}만 삼 — 모자란 만큼 따라잡기"
         return {"order": short, "note": note, "p1": p1}
     if p1 is None and not note:
-        note = f"사다리: 버크셔 RSI가 {LAD_RSI} 이하로 내려오기를 기다리는 중(시작 후 {len(days) - 1}거래일, 1년 지나면 전부 매수)"
+        note = f"사다리: {DEFENSE['name']} RSI가 {LAD_RSI} 이하로 내려오기를 기다리는 중(시작 후 {len(days) - 1}거래일, 1년 지나면 전부 매수)"
     return {"order": 0.0, "note": note, "p1": p1}
 
 
@@ -332,7 +358,13 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
         amt = min(p.cash, fear["target"] * tot - inv)
         if amt > 0:
             orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {fear['target']:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH else "") + ")"))
-    # 버크셔: 사다리식 (규칙서 10-15판)
+    # 버크셔(또는 SCHD): 사다리식 (규칙서 10-15판)
+    stray = {t: q for t, q in STRAY_DEFENSE.items() if q > 1e-9}
+    if stray:
+        left = ", ".join(f"{t} {q:g}주" for t, q in stray.items())
+        orders.append(Order("BRK", "hold", 0, None, f"칸 종목을 {DEFENSE['name']}(으)로 바꿨는데 예전 {left}가 남아 있음 — 먼저 정리해야 함"))
+        orders.append(Order("SOXL", "hold", 0, None, "무한매수법은 LOC 시험 뒤 연결 예정(지금은 현금 보유)"))
+        return orders
     lad = brk_ladder_plan(pos["BRK"], brk_hist, prices["BRK"], start, today)
     if lad["order"] > 0:
         orders.append(Order("BRK", "buy", lad["order"], None, lad["note"]))
@@ -393,7 +425,7 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     fear = fear_score(info["score"], hist, prices["TQQQ"], tq_closes)
     fear["rsi"] = rsi_wilder(closes_with_today(tq_closes, prices["TQQQ"], today_us))
     return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": cape_block(),
-            "brk_hist": fetch_daily_closes("BRK-B", "2y"), "today_kst": today_kst, "today_us": today_us}
+            "brk_hist": fetch_daily_closes(DEFENSE["yahoo"], "2y"), "today_kst": today_kst, "today_us": today_us}
 
 
 def print_status(tag: str, cfg: dict, ctx: dict) -> None:

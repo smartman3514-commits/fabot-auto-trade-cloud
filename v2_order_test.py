@@ -20,7 +20,7 @@ from auto_trade_loop_kiwoom import KiwoomChaseOrder, KiwoomOverseasChaseOrder, _
 from cooldown import log_trade
 
 ACCOUNT = "키움 v2 시험"
-US = [("QQQ", "ND"), ("BRKb", "NY"), ("QLD", "NY")]
+US = [("QQQ", "ND"), ("BRKb", "NY"), ("QLD", "NY"), ("SCHD", "NY")]
 KR = ["486290"]
 lines: list[str] = []
 
