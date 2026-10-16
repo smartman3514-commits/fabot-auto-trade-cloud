@@ -20,7 +20,8 @@ from auto_trade_loop_kiwoom import KiwoomChaseOrder, KiwoomOverseasChaseOrder, _
 from cooldown import log_trade
 
 ACCOUNT = "키움 v2 시험"
-US = [("QQQ", "ND"), ("BRKb", "NY"), ("QLD", "NY"), ("SCHD", "NY")]
+# 10-15 밤: QQQ·QLD 체결 확인, BRKb는 모의투자 "매매불가 종목". 10-16 밤엔 SCHD만 시험한다.
+US = [("SCHD", "NY")]
 KR = ["486290"]
 lines: list[str] = []
 
