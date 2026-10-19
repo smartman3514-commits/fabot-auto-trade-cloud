@@ -87,7 +87,7 @@ LAD_RSI, LAD_UNIT, LAD_GAP, LAD_DEADLINE = 40, .10, 21, 252
 LAD_DOWN = [(.90, 1.5), (.85, 2.0), (.80, 2.5), (.75, 3.0), (.70, 3.5), (.65, 4.0), (.60, 4.5), (.55, 5.0), (.50, 5.5)]
 LAD_UP = [1 + .05 * k for k in range(2, 11)]           # +10%, +15%, … +50% → 1회분씩
 OVERSEAS_FEE_MARGIN = .011
-PEACE_LO, PEACE_HI, PEACE_FRAC, PEACE_GAP_DAYS = 35, 65, .10, 3
+PEACE_LO, PEACE_HI, PEACE_FRAC, PEACE_GAP_DAYS = 0, 65, .10, 3   # 10-19 인선: 35~65 → 65 이하(공포 때도 산다, 백테스트 결과 같음)
 QQQ_RESERVE, QQQ_RESERVE_FG = .30, 15   # 10-19 인선: QQQ(QQQM) 칸 30%는 F&G 15 이하(진짜 패닉)에서만 쓴다
 
 
@@ -384,11 +384,11 @@ def plan_kr(pos: dict[str, Position], fg_now: float, today: date) -> list[Order]
             continue
         last = max((d for d, _, _ in p.buys), default=None)
         if last and cooldown._trading_days_between(last, today) < PEACE_GAP_DAYS:
-            orders.append(Order(k, "hold", 0, None, f"평시 매수 조건이지만 {last} 매수 뒤 {PEACE_GAP_DAYS}거래일 쉬는 중"))
+            orders.append(Order(k, "hold", 0, None, f"F&G {PEACE_HI} 이하 매수 조건이지만 {last} 매수 뒤 {PEACE_GAP_DAYS}거래일 쉬는 중"))
             continue
         amt = p.cash * PEACE_FRAC
         if amt > 0:
-            orders.append(Order(k, "buy", amt, None, f"평시(F&G {fg_now:.0f}) 남은 돈의 {PEACE_FRAC:.0%}"))
+            orders.append(Order(k, "buy", amt, None, f"F&G {fg_now:.0f} ≤ {PEACE_HI} — 남은 돈의 {PEACE_FRAC:.0%}"))
     return orders
 
 
