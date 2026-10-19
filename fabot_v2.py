@@ -66,10 +66,10 @@ STRAY_DEFENSE: dict[str, float] = {}   # 칸 종목을 바꾼 뒤에도 남아 �
 
 SLEEVES = [
     Sleeve("TQQQ", "TQQQ", "ND", "TQQQ", .15, "USD", "curve_sell"),
-    Sleeve("SOXL", "SOXL", "NY", "SOXL", .10, "USD", "infinite"),
+    Sleeve("SOXL", "SOXL", "NY", "SOXL", .05, "USD", "infinite"),   # 10-19 인선: 10 → 5
     Sleeve("QLD", "QLD", "NY", "QLD", .15, "USD", "curve"),
     Sleeve("QQQ", "QQQ", "ND", "QQQ", .30, "USD", "curve"),
-    Sleeve("BRK", DEFENSE["code"], DEFENSE["exchange"], DEFENSE["ledger"], .20, "USD", "dca"),
+    Sleeve("BRK", DEFENSE["code"], DEFENSE["exchange"], DEFENSE["ledger"], .25, "USD", "dca"),   # 10-19 인선: 20 → 25 (SOXL에서 옮김)
     Sleeve("CC_DIV", "472150", "KRX", "TIGER 배당커버드콜액티브(472150)", .05, "KRW", "peace"),
     Sleeve("CC_NAS", "486290", "KRX", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", .05, "KRW", "peace"),
 ]
