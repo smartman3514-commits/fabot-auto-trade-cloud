@@ -1,7 +1,7 @@
 """FA v2 (규칙서 2026-10-15판) — 키움 모의계좌에서 돌리는 새 버전의 장부·규칙·주문.
 
 2026-10-15 추가: FA곡선 RSI 가속(TQQQ 일봉 RSI(14) ≤ 30이면 목표 비중 +40%p), 버크셔 사다리식 매수,
-실제 주문 실행(run_live). SOXL 수익 30분할은 아직 연결 전(현금 보유).
+실제 주문 실행(run_live). 2026-10-19 인선 결정으로 SOXL 칸은 뺐다(버크셔/SCHD 30으로).
 
 인선 결정(2026-10-13): KIS는 지금 버전 그대로, 키움은 이 새 버전으로 실제 주문을 낸다.
 키움 계좌에는 옛 보유분(TIGER 배당커버드콜 약 6,700주, 원화 약 3.5억)이 섞여 있으므로,
@@ -66,10 +66,9 @@ STRAY_DEFENSE: dict[str, float] = {}   # 칸 종목을 바꾼 뒤에도 남아 �
 
 SLEEVES = [
     Sleeve("TQQQ", "TQQQ", "ND", "TQQQ", .15, "USD", "curve_sell"),
-    Sleeve("SOXL", "SOXL", "NY", "SOXL", .05, "USD", "infinite"),   # 10-19 인선: 10 → 5
     Sleeve("QLD", "QLD", "NY", "QLD", .15, "USD", "curve"),
     Sleeve("QQQ", "QQQM", "ND", "QQQM", .30, "USD", "curve"),   # 10-19 인선: QQQ → QQQM(같은 나스닥100, 1주 약 $290이라 작은 금액도 규칙에 가깝게)
-    Sleeve("BRK", DEFENSE["code"], DEFENSE["exchange"], DEFENSE["ledger"], .25, "USD", "dca"),   # 10-19 인선: 20 → 25 (SOXL에서 옮김)
+    Sleeve("BRK", DEFENSE["code"], DEFENSE["exchange"], DEFENSE["ledger"], .30, "USD", "dca"),   # 10-19 인선: SOXL을 빼고 30 (프로그램 단순화·코스피와 겹침 줄이기)
     Sleeve("CC_DIV", "472150", "KRX", "TIGER 배당커버드콜액티브(472150)", .05, "KRW", "peace"),
     Sleeve("CC_NAS", "486290", "KRX", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", .05, "KRW", "peace"),
 ]
@@ -368,15 +367,12 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
     if stray:
         left = ", ".join(f"{t} {q:g}주" for t, q in stray.items())
         orders.append(Order("BRK", "hold", 0, None, f"칸 종목을 {DEFENSE['name']}(으)로 바꿨는데 예전 {left}가 남아 있음 — 먼저 정리해야 함"))
-        orders.append(Order("SOXL", "hold", 0, None, "무한매수법은 LOC 시험 뒤 연결 예정(지금은 현금 보유)"))
         return orders
     lad = brk_ladder_plan(pos["BRK"], brk_hist, prices["BRK"], start, today)
     if lad["order"] > 0:
         orders.append(Order("BRK", "buy", lad["order"], None, lad["note"]))
     elif lad["note"]:
         orders.append(Order("BRK", "hold", 0, None, lad["note"]))
-    # SOXL 무한매수법 — 4단계에서 연결
-    orders.append(Order("SOXL", "hold", 0, None, "무한매수법은 LOC 시험 뒤 연결 예정(지금은 현금 보유)"))
     return orders
 
 
