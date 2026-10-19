@@ -1,11 +1,11 @@
 {
   "start_date": "2026-10-19",
   "defense_stock": "SCHD",
-  "usd_cash_at_start": 56031.54,
-  "legacy_tqqq_qty": 591,
+  "usd_cash_at_start": 593.03,
+  "legacy_tqqq_qty": 1407,
   "price_date": "2026-10-16",
   "usd_capital": null,
   "krw_capital": null,
   "fx": null,
-  "note": "재원 = usd_cash_at_start + legacy_tqqq_qty x TQQQ price_date 종가, 환율 = price_date 종가(KRW=X). 시작 전 옛 규칙이 TQQQ를 사고팔면 usd_cash_at_start·legacy_tqqq_qty를 고칠 것. 첫 미국장 창에서 옛 TQQQ를 판다."
+  "note": "재원 = usd_cash_at_start + legacy_tqqq_qty x TQQQ price_date 종가, 환율 = price_date 종가(KRW=X). 시작 전 옛 규칙이 TQQQ를 사고팔면 usd_cash_at_start·legacy_tqqq_qty를 고칠 것. 첫 미국장 창에서 옛 TQQQ를 판다. 10-19: 옛 규칙이 10-16(미국) F&G 18에 TQQQ 816주 @$67.76 매수 → 달러 $593.03(결제 뒤 d2~d4), 옛 TQQQ 1407주(키움 조회)로 고침."
 }
