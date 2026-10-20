@@ -55,6 +55,19 @@ def _kiwoom_cash_parts() -> tuple[float, float]:
     return domestic, float(settled)
 
 
+def _v2_cash_parts() -> tuple[float, float]:
+    """(원화, 달러) — 키움 v2 장부의 남은 현금. 아직 시작 전이면 0."""
+    import fabot_v2 as v2
+    cfg = v2.load_config()
+    if not cfg.get("usd_capital") and not cfg.get("usd_cash_at_start"):
+        return 0.0, 0.0
+    cfg = v2.resolve_capital(cfg)
+    pos = v2.build_ledger(cfg, v2.fetch_v2_trades())
+    krw = sum(p.cash for p in pos.values() if p.sleeve.currency == "KRW")
+    usd = sum(p.cash for p in pos.values() if p.sleeve.currency == "USD")
+    return max(0.0, krw), max(0.0, usd)
+
+
 def _already_logged_this_month(account: str, ticker: str) -> bool:
     env = _load_journal_env()
     month_start = date.today().replace(day=1).isoformat()
@@ -117,7 +130,11 @@ def main() -> int:
 
     try:
         krw_cash, usd_cash = _kiwoom_cash_parts()
-        _log_interest_both("키움 모의투자", krw_cash, usd_cash, dry_run=args.dry_run)
+        # 2026-10-20 인선 요청: 키움 계좌 현금 중 v2(FA 새 규칙) 몫은 "키움 v2"로 따로 기록하고,
+        # 옛 계좌에는 나머지만 기록한다. v2 몫 = v2 장부의 칸별 현금(달러·원화) 합계.
+        v2_krw, v2_usd = _v2_cash_parts()
+        _log_interest_both("키움 모의투자", max(0.0, krw_cash - v2_krw), max(0.0, usd_cash - v2_usd), dry_run=args.dry_run)
+        _log_interest_both("키움 v2", min(krw_cash, v2_krw), min(usd_cash, v2_usd), dry_run=args.dry_run)
     except Exception as exc:
         ok = False
         print(f"Kiwoom 이자 추정 실패: {exc}")

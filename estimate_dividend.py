@@ -36,6 +36,15 @@ COVERED_CALL_TRADE_KEY = "TIGER 배당커버드콜액티브(472150)"
 ACCOUNTS = ["KIS 모의투자", "키움 모의투자"]
 # 계좌 시작(KIS 07-23)보다 여유 있게 이른 조회 시작일 — 놓친 과거분도 같이 훑는다.
 SCHEDULE_LOOKBACK_START = "20260701"
+# 2026-10-20 인선 요청: 키움 v2(FA 새 규칙) 검증용 — v2가 산 커버드콜의 배당은 "키움 v2"로 따로 기록하고,
+# 옛 계좌("키움 모의투자")에는 v2 몫을 뺀 옛 규칙 몫만 기록한다. 486290은 분배금에 15.4%가 원천징수된다
+# (2026-07-02 실계좌 입금내역 실측) — 세후로 기록, 472150은 비과세.
+V2_ACCOUNT = "키움 v2"
+V2_LOOKBACK_START = "20261020"
+V2_COVERED_CALLS = [
+    ("472150", "TIGER 배당커버드콜액티브(472150)", 1.0),
+    ("486290", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", 1 - 0.154),
+]
 
 
 def _sb_headers(env: dict) -> dict:
@@ -45,12 +54,12 @@ def _sb_headers(env: dict) -> dict:
     }
 
 
-def _get_trades(env: dict, account: str) -> list[dict]:
+def _get_trades(env: dict, account: str, ticker: str = COVERED_CALL_TRADE_KEY) -> list[dict]:
     """매수·매도 기록 전부(배당 기록 제외)."""
     url = f"{env['SUPABASE_URL']}/rest/v1/trades"
     params = {
         "select": "trade_date,quantity,action",
-        "ticker": f"eq.{COVERED_CALL_TRADE_KEY}",
+        "ticker": f"eq.{ticker}",
         "action": "in.(buy,sell)",
         "account": f"eq.{account}",
         "order": "trade_date.asc",
@@ -91,11 +100,11 @@ def _shares_at_record(trades: list[dict], broker_now: float | None, record_date:
     return broker_now - sum(_signed(t) for t in trades if t["trade_date"] > record_date)
 
 
-def _existing_dividend_pay_dates(env: dict, account: str) -> set:
+def _existing_dividend_pay_dates(env: dict, account: str, ticker: str = COVERED_CALL_TRADE_KEY) -> set:
     url = f"{env['SUPABASE_URL']}/rest/v1/trades"
     params = {
         "select": "trade_date",
-        "ticker": f"eq.{COVERED_CALL_TRADE_KEY}",
+        "ticker": f"eq.{ticker}",
         "action": "eq.dividend",
         "account": f"eq.{account}",
     }
@@ -104,11 +113,12 @@ def _existing_dividend_pay_dates(env: dict, account: str) -> set:
     return {row["trade_date"] for row in resp.json()}
 
 
-def _log_dividend(env: dict, account: str, pay_date: str, amount: int, memo: str) -> None:
+def _log_dividend(env: dict, account: str, pay_date: str, amount: int, memo: str,
+                  ticker: str = COVERED_CALL_TRADE_KEY) -> None:
     url = f"{env['SUPABASE_URL']}/rest/v1/trades"
     body = {
         "trade_date": pay_date,
-        "ticker": COVERED_CALL_TRADE_KEY,
+        "ticker": ticker,
         "action": "dividend",
         "quantity": 1,
         "price": amount,
@@ -139,6 +149,10 @@ def main() -> int:
                 continue
             already = _existing_dividend_pay_dates(env, account)
             broker_now = _broker_shares_now(account)
+            if broker_now is not None and account == "키움 모의투자":
+                # 같은 키움 계좌에 v2가 산 몫이 섞여 있다 — 옛 규칙 몫만 남긴다(v2 몫은 아래 _v2_dividends).
+                v2_now = _shares_held_at(_get_trades(env, V2_ACCOUNT), "9999-12-31")
+                broker_now -= v2_now
             if broker_now is not None:
                 ledger_now = _shares_held_at(trades, "9999-12-31")
                 if abs(ledger_now - broker_now) > 0.5:
@@ -164,7 +178,37 @@ def main() -> int:
             ok = False
             print(f"{account} 배당 처리 실패: {exc}")
 
+    try:
+        _v2_dividends(env)
+    except Exception as exc:
+        ok = False
+        print(f"{V2_ACCOUNT} 배당 처리 실패: {exc}")
+
     return 0 if ok else 1
+
+
+def _v2_dividends(env: dict) -> None:
+    """키움 v2가 산 커버드콜 배당 — v2 매매기록의 기준일 보유수량 × 실제 주당배당금(세후), 실제 지급일로 기록."""
+    today_s = date.today().isoformat()
+    for code, key, net in V2_COVERED_CALLS:
+        trades = _get_trades(env, V2_ACCOUNT, key)
+        if not trades:
+            print(f"{V2_ACCOUNT}: {code} 매수 기록 없음 — 건너뜁니다.")
+            continue
+        schedule = fetch_dividend_schedule(code, V2_LOOKBACK_START, date.today().strftime("%Y%m%d"))
+        already = _existing_dividend_pay_dates(env, V2_ACCOUNT, key)
+        for div in schedule:
+            if div["pay_date"] in already or div["pay_date"] > today_s:
+                continue
+            shares = _shares_held_at(trades, div["record_date"])
+            amount = round(shares * div["per_share"] * net)
+            if shares <= 0 or amount <= 0:
+                continue
+            tax = "" if net == 1.0 else ", 15.4% 원천징수 뒤"
+            memo = (f"v2 배당(예탁원 배당일정 API, 기준일 {div['record_date']} 주당 {div['per_share']:,.0f}원 × "
+                    f"v2 보유 {shares:,.0f}주{tax}, 지급일 {div['pay_date']})")
+            _log_dividend(env, V2_ACCOUNT, div["pay_date"], amount, memo, ticker=key)
+            print(f"{V2_ACCOUNT}: {code} {div['pay_date']} 배당 {amount:,}원 기록 완료 ({shares:,.0f}주)")
 
 
 if __name__ == "__main__":
