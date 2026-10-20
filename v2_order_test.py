@@ -21,7 +21,7 @@ from cooldown import log_trade
 
 ACCOUNT = "키움 v2 시험"
 # 10-15 밤: QQQ·QLD 체결 확인, BRKb는 모의투자 "매매불가 종목". 10-16 밤엔 SCHD만 시험한다.
-US = [("QQQM", "ND")]   # 10-20: SCHD는 10-19 성공, QQQM은 "주문가능금액" 거절 → 달러가 생긴 뒤 다시 시험
+US = [("QQQM", "ND")]   # 10-20: SCHD는 10-19 성공, QQQM은 "주문가능금액" 거절 → TQQQ 매도대금이 결제된 10-22에 다시 시험
 KR = ["486290"]
 lines: list[str] = []
 
