@@ -88,7 +88,6 @@ LAD_DOWN = [(.90, 1.5), (.85, 2.0), (.80, 2.5), (.75, 3.0), (.70, 3.5), (.65, 4.
 LAD_UP = [1 + .05 * k for k in range(2, 11)]           # +10%, +15%, … +50% → 1회분씩
 OVERSEAS_FEE_MARGIN = .011
 PEACE_LO, PEACE_HI, PEACE_FRAC, PEACE_GAP_DAYS = 0, 65, .10, 3   # 10-19 인선: 35~65 → 65 이하(공포 때도 산다, 백테스트 결과 같음)
-QQQ_RESERVE, QQQ_RESERVE_FG = .30, 15   # 10-19 인선: QQQ(QQQM) 칸 30%는 F&G 15 이하(진짜 패닉)에서만 쓴다
 
 
 # ── 시작 설정 ────────────────────────────────────────────────────────────────
@@ -349,10 +348,7 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
         p = pos[k]; px = prices[k]; inv = p.qty * px; tot = p.cash + inv
         if tot <= 0 or any(o.sleeve == k and o.side == "sell" for o in orders):
             continue
-        tgt = fear["target"]; reserve_note = ""
-        if k == "QQQ" and fg_now > QQQ_RESERVE_FG and tgt > 1 - QQQ_RESERVE:
-            tgt = 1 - QQQ_RESERVE
-            reserve_note = f", {QQQ_RESERVE:.0%}는 F&G {QQQ_RESERVE_FG} 이하용으로 남김"
+        tgt = fear["target"]   # 10-21 인선: QQQM 30% 예비(F&G 15 이하용) 뺌 — 백테스트 차이 거의 없음, 규칙 단순화
         share = inv / tot
         if share >= tgt - CURVE_GAP:
             continue
@@ -361,7 +357,7 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
             continue
         amt = min(p.cash, tgt * tot - inv)
         if amt > 0:
-            orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {tgt:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH else "") + reserve_note + ")"))
+            orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {tgt:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH else "") + ")"))
     # 버크셔(또는 SCHD): 사다리식 (규칙서 10-15판)
     stray = {t: q for t, q in STRAY_DEFENSE.items() if q > 1e-9}
     if stray:
