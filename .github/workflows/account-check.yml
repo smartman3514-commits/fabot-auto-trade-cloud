@@ -6,19 +6,53 @@ on:
   schedule:
     - cron: "10 0 * * *"     # 매일 09:10 KST — 미국장 실행(04:40~06:10) 뒤
     - cron: "10 7 * * 1-5"   # 평일 16:10 KST — 국내장 실행(15:15~15:35) 뒤
+  # 2026-10-21: 16:10 예약이 16:46까지 시작조차 안 해서 텔레그램이 안 감(GitHub schedule
+  # 지연·건너뜀). auto-trade.yml과 같은 방법으로 cron-job.org가 정시에 부르게 한다.
+  # cron-job.org 본문: {"event_type":"account-check"}  (09:10 매일, 16:10 평일 KST)
+  # schedule은 예비로 남기고, 정시 실행이 이미 있었으면 아래에서 건너뛴다.
+  repository_dispatch:
+    types: [account-check]
   workflow_dispatch:
+
+concurrency:
+  group: account-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - name: Skip late schedule if dispatch already ran
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          skip=false
+          if [ "$EVENT" = "schedule" ]; then
+            since=$(date -u -d '90 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+            n=$(gh run list -R "$GITHUB_REPOSITORY" --workflow account-check.yml --event repository_dispatch --limit 10 \
+                  --json createdAt,status,conclusion \
+                  --jq "[.[] | select(.createdAt >= \"$since\") | select(.status != \"completed\" or .conclusion == \"success\")] | length" \
+                || echo 0)
+            if [ "${n:-0}" -gt 0 ]; then skip=true; echo "최근 90분 안에 정시 실행이 있어 예비 실행은 건너뜁니다."; fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.skip != 'true'
         with:
           python-version: "3.12"
       - name: Install dependencies
+        if: steps.gate.outputs.skip != 'true'
         run: pip install -r requirements.txt
       - name: Account check
+        if: steps.gate.outputs.skip != 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
