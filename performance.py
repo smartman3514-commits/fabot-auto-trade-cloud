@@ -110,8 +110,9 @@ def equity(account: str, start: date, usd_cap: float, krw_cap: float) -> dict:
             "days": len(points)}
 
 
-def nasdaq_since(start: date) -> dict:
-    q, fx = _closes("QQQ", start), _closes("KRW=X", start)
+def index_since(symbol: str, start: date) -> dict:
+    """같은 날 같은 돈으로 그 지수 ETF를 샀다고 본 원화 수익률·MDD."""
+    q, fx = _closes(symbol, start), _closes("KRW=X", start)
     days = sorted(d for d in q if d >= start)
     vals = [q[d] * (_price_on(fx, d) or 0) for d in days]
     vals = [v for v in vals if v]
@@ -122,6 +123,25 @@ def nasdaq_since(start: date) -> dict:
         peak = max(peak, v)
         mdd = min(mdd, v / peak - 1)
     return {"ret": vals[-1] / vals[0] - 1, "mdd": mdd}
+
+
+BANDS_PATH = __import__("pathlib").Path(__file__).resolve().parent / "backtest_bands.json"
+
+
+def band_check(key: str, n_days: int, ret: float, mdd: float, nq: dict, sp: dict) -> str:
+    """시뮬레이션 범위표(backtest_bands.json: 1998~ 아무 날에 새로 시작해 N거래일 돈 결과의 분위)와 대조."""
+    import json
+    bands = json.loads(BANDS_PATH.read_text(encoding="utf-8"))[key]
+    n = min(65, max(5, int(round(n_days / 5)) * 5))
+    b = bands[str(n)]
+    def where(x, d, lo=5, hi=95):
+        return "범위 안" if d[str(lo)] <= x <= d[str(hi)] else ("⚠️ 범위 아래" if x < d[str(lo)] else "범위 위")
+    pp = lambda x: f"{x * 100:+.1f}%"
+    parts = [f"수익 {pp(ret)} [시뮬 {pp(b['ret']['5'])}~{pp(b['ret']['95'])}, 중간 {pp(b['ret']['50'])}] {where(ret, b['ret'])}",
+             f"MDD {pp(mdd)} [시뮬 하위5% {pp(b['mdd']['5'])}, 중간 {pp(b['mdd']['50'])}] {'범위 안' if mdd >= b['mdd']['5'] else '⚠️ 시뮬보다 깊음'}",
+             f"나스닥 대비 {pp(ret - nq['ret'])} [시뮬 {pp(b['ex_nq']['5'])}~{pp(b['ex_nq']['95'])}] {where(ret - nq['ret'], b['ex_nq'])}",
+             f"S&P 대비 {pp(ret - sp['ret'])} [시뮬 {pp(b['ex_sp']['5'])}~{pp(b['ex_sp']['95'])}] {where(ret - sp['ret'], b['ex_sp'])}"]
+    return f"   시뮬 대조({n}거래일 칸): " + " · ".join(parts)
 
 
 def signal_line() -> str:
@@ -147,14 +167,19 @@ def report_lines() -> list[str]:
     strats = [(v2.V2_ACCOUNT, date.fromisoformat(vc["start_date"]), float(vc["usd_capital"]), float(vc["krw_capital"])),
               (kr.ACCOUNT, date.fromisoformat(kc["start_date"]), 0.0, float(kc["krw_capital"]))]
     today = datetime.now(KST).date()
-    for name, start, usd, krw in strats:
+    for (name, start, usd, krw), key in zip(strats, ("v2", "kr")):
         if today < start:
             lines.append(f"📈 {name}: 시작({start}) 전")
             continue
         e = equity(name, start, usd, krw)
-        nq = nasdaq_since(start)
-        lines.append(f"📈 {name}: {e['now']:,.0f}원 · 시작 대비 {e['ret']:+.2%} · MDD {e['mdd']:.2%} "
-                     f"(나스닥100 원화 {nq['ret']:+.2%}, MDD {nq['mdd']:.2%})")
+        nq, sp = index_since("QQQ", start), index_since("SPY", start)
+        lines.append(f"📈 {name} ({e['days'] - 1}거래일): {e['now']:,.0f}원 · 시작 대비 {e['ret']:+.2%} · MDD {e['mdd']:.2%} "
+                     f"| 나스닥100 {nq['ret']:+.2%}·MDD {nq['mdd']:.2%} | S&P500 {sp['ret']:+.2%}·MDD {sp['mdd']:.2%} (원화)")
+        if e["days"] - 1 >= 1:
+            try:
+                lines.append(band_check(key, e["days"] - 1, e["ret"], e["mdd"], nq, sp))
+            except Exception as exc:
+                lines.append(f"   시뮬 대조 실패: {exc}")
         for t in e["today_trades"]:
             lines.append(f"   오늘 {'매수' if t['action'] == 'buy' else '매도'} {t['ticker']} {float(t['quantity']):g}주 @ {float(t['price']):,.2f}")
     try:
