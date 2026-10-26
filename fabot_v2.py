@@ -10,6 +10,11 @@
 
 시작일(v2_config.json start_date)부터 auto_trade_loop_kiwoom.py가 옛 규칙 대신 run_live()를 부른다.
 
+2026-10-26 인선 결정: 키움 모의투자 해외 계좌가 새로 열리지 않아(10-24 만료 뒤 국내 계좌 81372441만 나옴)
+v2를 **한투 새 모의계좌(50220595, 원화 5억 + 달러 $100,000)**로 옮겨 새로 시작한다. v2_config.json의
+"broker": "kis"면 한투 주문 도구(overseas_order_executor·live_order_executor)로 주문하고
+auto_trade_loop.py가 부른다. 장부 이름은 "account"(한투 v2). 옛 '키움 v2' 기록은 그대로 둔다.
+
     python fabot_v2.py              # 지금 시각 기준 "오늘 할 일"을 계산해 보여 준다(주문 없음)
 """
 from __future__ import annotations
@@ -27,9 +32,22 @@ import requests
 import cooldown
 import crisis_plan
 
-V2_ACCOUNT = "키움 v2"
 CONFIG_PATH = Path(__file__).resolve().parent / "v2_config.json"
 KST = timezone(timedelta(hours=9))
+
+
+def _cfg_value(key: str, default):
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8")).get(key) or default
+    except (OSError, ValueError):
+        return default
+
+
+BROKER = str(_cfg_value("broker", "kiwoom")).lower()           # kis | kiwoom
+V2_ACCOUNT = _cfg_value("account", "키움 v2")
+# 한투 해외 주문·잔고는 4자리 거래소 코드를 쓴다. NYSE Arca 상장 ETF(QLD·SCHD)는 한투에서 AMEX로 다룬다.
+KIS_EXCG = {"TQQQ": "NASD", "QQQM": "NASD", "QLD": "AMEX", "SCHD": "AMEX"}
+KIS_EXCG.update(_cfg_value("kis_exchange", {}))                 # 실측으로 다르면 설정에서 바꾼다
 
 
 @dataclass(frozen=True)
@@ -281,7 +299,8 @@ class Order:
     note: str
 
 
-def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: float, start: date, today: date) -> dict:
+def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: float, start: date, today: date,
+                    name: str | None = None, money=lambda v: f"${v:,.2f}") -> dict:
     """사다리를 시작일부터 오늘까지 일봉으로 다시 돌려(상태 없음) '지금까지 샀어야 할 금액'을 구하고,
     실제로 산 금액과의 차이만큼 산다. 빠진 날이 있어도 다음 실행에서 따라잡는다."""
     u = LAD_UNIT * b.capital
@@ -296,7 +315,7 @@ def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: floa
         elif p1 is None:
             r = rsi_wilder(full[:first_i + i + 1])
             if r <= LAD_RSI:
-                units = 1.0; p1 = c; why = f"RSI {r:.0f} ≤ {LAD_RSI} 첫 매수(기준가 ${c:.2f})"
+                units = 1.0; p1 = c; why = f"RSI {r:.0f} ≤ {LAD_RSI} 첫 매수(기준가 {money(c)})"
         else:
             hits = [m for lv, m in LAD_DOWN if lv not in done and c <= p1 * lv]
             for lv, m in LAD_DOWN:
@@ -306,7 +325,7 @@ def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: floa
             for lv in ups:
                 done.add(("u", lv))
             units = sum(hits) + len(ups)
-            why = f"기준가 ${p1:.2f} 대비 {c / p1 - 1:+.0%}"
+            why = f"기준가 {money(p1)} 대비 {c / p1 - 1:+.0%}"
             if units == 0 and last is not None and i - last >= LAD_GAP:
                 units = 1.0; why = f"한 달({LAD_GAP}거래일) 동안 매수 없음"
         if units:
@@ -319,10 +338,10 @@ def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: floa
     short = min(b.cash, want - spent)
     if short >= price_now:
         if not fired_today:
-            note = f"사다리: 지금까지 사야 했던 ${want:,.0f} 중 ${spent:,.0f}만 삼 — 모자란 만큼 따라잡기"
+            note = f"사다리: 지금까지 사야 했던 {money(want)} 중 {money(spent)}만 삼 — 모자란 만큼 따라잡기"
         return {"order": short, "note": note, "p1": p1}
     if p1 is None and not note:
-        note = f"사다리: {DEFENSE['name']} RSI가 {LAD_RSI} 이하로 내려오기를 기다리는 중(시작 후 {len(days) - 1}거래일, 1년 지나면 전부 매수)"
+        note = f"사다리: {name or DEFENSE['name']} RSI가 {LAD_RSI} 이하로 내려오기를 기다리는 중(시작 후 {len(days) - 1}거래일, 1년 지나면 전부 매수)"
     return {"order": 0.0, "note": note, "p1": p1}
 
 
@@ -403,8 +422,35 @@ def summary_lines(pos: dict[str, Position], prices: dict[str, float], fx: float)
 
 # ── 상황 모으기 ──────────────────────────────────────────────────────────────
 
+def kis_us_price(code: str) -> float:
+    """한투 해외 현재가(장이 닫혀 있으면 마지막 체결가). 시세 API는 3자리 거래소 코드(NAS/NYS/AMS)를 쓴다."""
+    import overseas_order_executor as O
+    excd = O._QUOTE_EXCD_BY_ORDER_EXCG[KIS_EXCG[code]]
+    O._throttle()
+    r = O._get_with_retry(f"{O.BASE_URL}/uapi/overseas-price/v1/quotations/price",
+                          headers={**O._headers("HHDFS00000300"), "tr_cont": ""}, params={"AUTH": "", "EXCD": excd, "SYMB": code})
+    O._raise_verbose(r)
+    d = r.json()
+    if d.get("rt_cd") != "0" or not float(d["output"].get("last") or 0):
+        raise RuntimeError(f"한투 {code}({excd}) 현재가 조회 실패: {d.get('msg1') or d.get('output')}")
+    return float(d["output"]["last"])
+
+
+def kis_kr_price(code: str) -> float:
+    """한투 국내 현재가(stck_prpr)."""
+    import live_order_executor as L
+    L._throttle()
+    r = L._get_with_retry(f"{L.BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
+                          headers={**L._headers("FHKST01010100"), "tr_cont": ""},
+                          params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code})
+    L._raise_verbose(r)
+    d = r.json()
+    if d.get("rt_cd") != "0":
+        raise RuntimeError(f"한투 {code} 현재가 조회 실패: {d.get('msg1')}")
+    return float(d["output"]["stck_prpr"])
+
+
 def gather(cfg: dict, trades: list[dict]) -> dict:
-    import kiwoom_client as K
     import today_signal
     from zoneinfo import ZoneInfo
     today_kst = datetime.now(KST).date()
@@ -412,6 +458,10 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     pos = build_ledger(cfg, trades)
     prices = {}
     for s_ in SLEEVES:
+        if BROKER == "kis":
+            prices[s_.key] = kis_us_price(s_.code) if s_.currency == "USD" else kis_kr_price(s_.code)
+            continue
+        import kiwoom_client as K
         if s_.currency == "USD":
             prices[s_.key] = K.abs_price(K.get_overseas_quote(s_.code, exchange=s_.exchange, mode="demo")["cur_prc"])
         else:
@@ -530,6 +580,122 @@ def _domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str
     print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {ch.filled_qty}주")
 
 
+# ── 실제 주문 (한투) ────────────────────────────────────────────────────────
+
+def wait_kr_close_auction() -> None:
+    """국내장 15:20~15:30은 장 마감 동시호가 — 그 사이 걸린 주문은 15:30에 한꺼번에 체결되고, 취소도 안 된다
+    (10-23 키움 486290 73주가 '미체결'로 끝났다가 15:30에 실제 체결된 사고). 그 창 안이면 15:31까지 기다린다."""
+    import time
+    now = datetime.now(KST)
+    until = now.replace(hour=15, minute=31, second=0, microsecond=0)
+    if now.replace(hour=15, minute=19, second=0, microsecond=0) <= now < until:
+        print(f"  장 마감 동시호가 체결을 기다립니다({until:%H:%M} KST까지).")
+        time.sleep((until - now).total_seconds())
+
+
+def _kis_overseas_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
+    import fill_price
+    import overseas_order_executor as O
+    from cooldown import log_trade
+    excg = KIS_EXCG[sl.code]
+    ref = float(O._get_asking_price(sl.code, excg).get("pask1") or 0)
+    if ref <= 0:
+        _say(f"{sl.key} 매수 못 함 — 호가 0(미국 정규장 아님)")
+        return
+    qty = int(amount * (1 - OVERSEAS_FEE_MARGIN) // ref)
+    cap = O.get_overseas_order_capacity(sl.code, excg, ref)
+    if cap["max_qty"] is not None and qty > cap["max_qty"]:
+        print(f"  증권사 한도({cap['max_qty']}주)를 넘어 {qty}주 → {cap['max_qty']}주로 줄입니다.")
+        qty = cap["max_qty"]
+    if qty < 1:
+        _say(f"{sl.key} 매수 건너뜀 — ${amount:,.0f}로는 1주(${ref:,.2f})도 못 삼")
+        return
+    if dry_run:
+        _say(f"{sl.key} 매수 {qty}주 @ 약 ${ref:,.2f} (dry-run, 주문 안 냄) — {note}")
+        return
+    before = O.get_overseas_holding(sl.code, excg)
+    ch = O.OverseasChaseOrder(sl.code, excg, "buy", qty, max_reprices=15, max_seconds=240.0, poll_interval=3.0)
+    ch.run()
+    if ch.filled_qty <= 0:
+        _say(f"{sl.key} 매수 주문이 체결되지 않음")
+        return
+    after = O.get_overseas_holding(sl.code, excg)
+    # 한투 모의 해외 평균단가는 당일 갱신이 안 될 때가 있다(10-03) → 체결내역 체결가를 먼저 쓴다
+    fill = (fill_price.safe(fill_price.kis_overseas, sl.code, excg, getattr(ch, "order_nos", []))
+            or fill_price.safe(fill_price.from_holding_delta, before, after, ch.filled_qty) or ref)
+    log_trade(ticker=sl.ledger, action="buy", quantity=ch.filled_qty, price=round(fill, 4), fg_score=fg,
+              memo=f"v2 자동실행(한투) — {note}", account=V2_ACCOUNT)
+    _say(f"{sl.key} 매수 {ch.filled_qty}/{qty}주 @ ${fill:,.2f} — {note}")
+    print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {ch.filled_qty}주")
+
+
+def _kis_overseas_sell(sl: Sleeve, qty: int, fg: float, dry_run: bool, note: str, account: str = V2_ACCOUNT) -> None:
+    import fill_price
+    import overseas_order_executor as O
+    from cooldown import log_trade
+    excg = KIS_EXCG[sl.code]
+    ref = float(O._get_asking_price(sl.code, excg).get("pbid1") or 0)
+    if ref <= 0:
+        _say(f"{sl.key} 매도 못 함 — 호가 0(미국 정규장 아님)")
+        return
+    held = O.get_overseas_holding(sl.code, excg)
+    if not held or held["qty"] < qty:
+        _say(f"{sl.key} 매도 {qty}주 중 계좌 보유가 {held['qty'] if held else 0}주뿐 — 보유만큼만 팝니다")
+        qty = held["qty"] if held else 0
+        if qty <= 0:
+            return
+    if dry_run:
+        _say(f"{sl.key} 매도 {qty}주 @ 약 ${ref:,.2f} (dry-run, 주문 안 냄) — {note}")
+        return
+    ch = O.OverseasChaseOrder(sl.code, excg, "sell", qty, max_reprices=15, max_seconds=240.0, poll_interval=3.0)
+    ch.run()
+    if ch.filled_qty <= 0:
+        _say(f"{sl.key} 매도 주문이 체결되지 않음")
+        return
+    px = fill_price.safe(fill_price.kis_overseas, sl.code, excg, getattr(ch, "order_nos", [])) or (ch.order["price"] if ch.order else ref)
+    log_trade(ticker=sl.ledger, action="sell", quantity=ch.filled_qty, price=round(px, 4), fg_score=fg,
+              memo=f"v2 자동실행(한투) — {note}", account=account)
+    _say(f"{sl.key} 매도 {ch.filled_qty}/{qty}주 @ ${px:,.2f} — {note}")
+    print(f"매매기록 저장 완료: {account} sell {sl.ledger} {ch.filled_qty}주")
+
+
+def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
+    import asyncio
+    import fill_price
+    import live_order_executor as L
+    from cooldown import log_trade
+    ref = int(float(L._get_asking_price(sl.code).get("askp1") or 0))
+    if ref <= 0:
+        _say(f"{sl.key} 매수 못 함 — 호가 0(국내 정규장 아님)")
+        return
+    qty = int(amount // ref)
+    if qty < 1:
+        _say(f"{sl.key} 매수 건너뜀 — {amount:,.0f}원으로는 1주({ref:,}원)도 못 삼")
+        return
+    if dry_run:
+        _say(f"{sl.key} 매수 {qty}주 @ 약 {ref:,}원 (dry-run, 주문 안 냄) — {note}")
+        return
+    before = L.get_holding(sl.code)
+    ch = L.ChaseOrder(sl.code, "buy", qty, max_reprices=60, max_seconds=630.0)
+    asyncio.run(ch.run())
+    filled = ch.filled_qty
+    if filled < qty:   # 동시호가에 걸린 주문은 15:30에 체결된다 → 보유 수량 차이로 다시 센다
+        wait_kr_close_auction()
+        after = L.get_holding(sl.code)
+        delta = (after["qty"] if after else 0) - (before["qty"] if before else 0)
+        if delta > filled:
+            print(f"  보유 수량으로 다시 셈: {filled}주 → {min(delta, qty)}주")
+            filled = min(delta, qty)
+    if filled <= 0:
+        _say(f"{sl.key} 매수 주문이 체결되지 않음")
+        return
+    fill = fill_price.safe(fill_price.kis_domestic, sl.code, getattr(ch, "order_nos", [])) or ref
+    log_trade(ticker=sl.ledger, action="buy", quantity=filled, price=round(fill, 4), fg_score=fg,
+              memo=f"v2 자동실행(한투) — {note}", account=V2_ACCOUNT)
+    _say(f"{sl.key} 매수 {filled}/{qty}주 @ {fill:,.0f}원 — {note}")
+    print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {filled}주")
+
+
 def _sell_legacy_tqqq(cfg: dict, pos: dict[str, Position], fg: float, dry_run: bool) -> None:
     """계좌의 TQQQ 중 v2 장부에 없는 몫(옛 규칙이 산 것)을 판다. 상태 없이 '실제 보유 − v2 장부'로 센다."""
     from auto_trade_loop_kiwoom import _overseas_holding, KIWOOM_ACCOUNT_LABEL
@@ -545,12 +711,16 @@ def _sell_legacy_tqqq(cfg: dict, pos: dict[str, Position], fg: float, dry_run: b
 
 
 def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
-    """auto_trade_loop_kiwoom.py가 시작일부터 부른다. 실행 창에 따라 미국/국내 할 일을 계산하고 주문한다."""
-    from auto_trade_loop_kiwoom import _within_tqqq_close_window, _within_domestic_close_window
+    """시작일부터 auto_trade_loop.py(한투) 또는 auto_trade_loop_kiwoom.py(키움)가 부른다(v2_config.json broker).
+    실행 창에 따라 미국/국내 할 일을 계산하고 주문한다."""
+    if BROKER == "kis":
+        from auto_trade_loop import _within_tqqq_close_window, _within_domestic_close_window
+    else:
+        from auto_trade_loop_kiwoom import _within_tqqq_close_window, _within_domestic_close_window
     market = force_market or ("us" if _within_tqqq_close_window()
                               else "kr" if _within_domestic_close_window() else None)
     cfg = resolve_capital(load_config())
-    print(f"=== [키움 v2] FA 새 규칙 (시작 {cfg['start_date']}) ===")
+    print(f"=== [{V2_ACCOUNT}] FA 새 규칙 (시작 {cfg['start_date']}) ===")
     print(f"v2 재원 ${cfg['usd_capital']:,.0f} + 원화 {cfg['krw_capital']:,.0f}원 ({cfg.get('basis', '설정값')})")
     if market is None:
         print("최종 신호: v2 실행 창 밖 — 건너뜁니다")
@@ -560,8 +730,11 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     print_status("v2", cfg, ctx)
     print(f"최종 신호: v2 {'미국장' if market == 'us' else '국내장'} 마감 실행" + (" (dry-run)" if dry_run else ""))
     sl = {x.key: x for x in SLEEVES}
+    buy_us, sell_us, buy_kr = ((_kis_overseas_buy, _kis_overseas_sell, _kis_domestic_buy) if BROKER == "kis"
+                               else (_overseas_buy, _overseas_sell, _domestic_buy))
     if market == "us":
-        _sell_legacy_tqqq(cfg, ctx["pos"], ctx["fg"], dry_run)
+        if BROKER != "kis":   # 한투 새 계좌에는 옛 규칙 TQQQ가 없다
+            _sell_legacy_tqqq(cfg, ctx["pos"], ctx["fg"], dry_run)
         orders = plan_us(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today_us"],
                          brk_hist=ctx["brk_hist"], start=date.fromisoformat(cfg["start_date"]))
     else:
@@ -572,11 +745,11 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         if o.side == "hold":
             _say(f"{o.sleeve} 대기 — {o.note}")
         elif o.side == "sell":
-            _overseas_sell(sl[o.sleeve], int(o.qty), ctx["fg"], dry_run, o.note)
+            sell_us(sl[o.sleeve], int(o.qty), ctx["fg"], dry_run, o.note)
         elif sl[o.sleeve].currency == "USD":
-            _overseas_buy(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
+            buy_us(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
         else:
-            _domestic_buy(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
+            buy_kr(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
 
 
 CONFIG_OVERRIDE: dict = {}

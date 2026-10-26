@@ -753,14 +753,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # 2026-10-19부터 키움은 FA v2(규칙서 10-15판: FA곡선+RSI 가속, 버크셔 사다리, 커버드콜 반반)로만 주문한다.
-    # 옛 규칙(TQQQ 25/50/100%, 커버드콜 10% 단일)은 시작일부터 키움에서 끈다. KIS는 옛 규칙 그대로(인선 결정 10-13).
-    import fabot_v2
-    if fabot_v2.is_live(fabot_v2.load_config()):
+    # 2026-10-26 인선 결정: 키움 모의투자는 국내 계좌(81372441)만 열려서, v2는 한투로 옮기고 키움은
+    # "키움 국내포트"(v2 규칙 그대로, 상품만 국내 상장 ETF — fabot_kr.py)만 돌린다. 옛 규칙(TQQQ·커버드콜 10%)은 끈다.
+    import fabot_kr
+    cfg = fabot_kr.load_config()
+    if cfg.get("start_date"):
+        if not fabot_kr.is_live(cfg):
+            print(f"최종 신호: 키움 국내포트 시작({cfg['start_date']}) 전 — 아무것도 하지 않습니다")
+            return
         try:
-            fabot_v2.run_live(dry_run=args.dry_run)
+            fabot_kr.run_live(dry_run=args.dry_run)
         except Exception as exc:
-            print(f"-> v2 오류로 중단: {exc}")
+            print(f"-> 키움 국내포트 오류로 중단: {exc}")
             raise
         return
 

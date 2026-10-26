@@ -1,0 +1,62 @@
+# 2026-10-26 시험용(머지 전에 지움): v2 한투 이전·키움 국내포트를 주문 없이 실제 계좌에 연결해 본다.
+name: v2 이전 시험 (주문 없음)
+
+on:
+  push:
+    branches: [kis-v2]
+  workflow_dispatch:
+
+jobs:
+  dryrun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: 시세·거래소 코드·계좌 확인 + 미리보기(주문 없음)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          KIS_PAPER_APP_KEY: ${{ secrets.KIS_PAPER_APP_KEY }}
+          KIS_PAPER_APP_SECRET: ${{ secrets.KIS_PAPER_APP_SECRET }}
+          KIS_PAPER_STOCK: ${{ secrets.KIS_PAPER_STOCK }}
+          KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
+          KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
+        run: |
+          python -u - <<'PY' || true
+          import overseas_order_executor as O, fabot_v2 as V
+          for code in ["TQQQ", "QLD", "QQQM", "SCHD"]:
+              for ex in ["NAS", "NYS", "AMS"]:
+                  try:
+                      O._throttle()
+                      r = O._get_with_retry(f"{O.BASE_URL}/uapi/overseas-price/v1/quotations/price",
+                                            headers={**O._headers("HHDFS00000300"), "tr_cont": ""}, params={"AUTH": "", "EXCD": ex, "SYMB": code})
+                      d = r.json(); print(code, ex, d.get("rt_cd"), (d.get("output") or {}).get("last"), d.get("msg1"))
+                  except Exception as e:
+                      print(code, ex, "실패", e)
+          for code in ["472150", "486290"]:
+              print(code, "한투 국내 현재가", V.kis_kr_price(code))
+          for code, ex in [("TQQQ", "NASD"), ("SCHD", "AMEX"), ("QLD", "AMEX"), ("QQQM", "NASD")]:
+              try:
+                  print(code, ex, "주문가능(달러)", O.get_overseas_order_capacity(code, ex, 100.0), "보유", O.get_overseas_holding(code, ex))
+              except Exception as e:
+                  print(code, ex, "주문가능 조회 실패", e)
+          import live_order_executor as L
+          print("한투 원화 예수금", L.get_cash_balance())
+          PY
+          echo "===== 한투 v2 미리보기: 미국장 ====="
+          python -u fabot_v2.py --market us || true
+          echo "===== 한투 v2 미리보기: 국내장 ====="
+          python -u fabot_v2.py --market kr || true
+          echo "===== 키움 국내포트 미리보기 ====="
+          python -u - <<'PY' || true
+          import kiwoom_client as K
+          c = K.get_domestic_cash_balance(mode="demo")
+          print("키움 예수금", c.get("entr"), "주문가능", c.get("ord_alow_amt"), c.get("return_msg"))
+          PY
+          python -u fabot_kr.py --market kr || true
+          echo "===== 시작 전 동작(오늘은 10-26): 자동매매 진입점 ====="
+          python -u auto_trade_loop.py --realtime --dry-run 2>&1 | head -5 || true
+          python -u auto_trade_loop_kiwoom.py --realtime --dry-run 2>&1 | head -5 || true

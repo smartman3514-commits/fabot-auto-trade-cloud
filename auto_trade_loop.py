@@ -345,6 +345,20 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
+    # 2026-10-26 인선 결정: 한투 새 모의계좌(50220595)에서는 v2만 돌리고 옛 규칙(TQQQ 25/50/100%·커버드콜 10%)은 끈다.
+    # v2의 국내 주문(ChaseOrder)은 자체 이벤트 루프를 쓰므로 별도 스레드에서 부른다.
+    import fabot_v2
+    if fabot_v2.BROKER == "kis":
+        if not fabot_v2.is_live(fabot_v2.load_config()):
+            print(f"최종 신호: 한투 v2 시작({fabot_v2.load_config().get('start_date')}) 전 — 아무것도 하지 않습니다")
+            return
+        try:
+            await asyncio.to_thread(fabot_v2.run_live, dry_run=args.dry_run)
+        except Exception as exc:
+            print(f"-> v2 오류로 중단: {exc}")
+            raise
+        return
+
     today_info = today_signal.get_cnn_score() if args.realtime else today_signal.get_today_score()
     raw = today_signal.judge_raw_signal(today_info["score"])
     cooldown_key = COVERED_CALL_TRADE_KEY if raw.action == "buy_covered_call" else None
