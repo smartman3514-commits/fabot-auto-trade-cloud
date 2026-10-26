@@ -1,0 +1,33 @@
+name: 모의계좌 만료 알림 (2027-01-26)
+
+# 2026-10-26 인선 요청: 한투 50220595·키움 81372441 모의투자는 둘 다 2026-10-26 ~ 2027-01-26(3개월)이고
+# 연장이 안 돼 다시 신청해야 한다(10-24 키움·한투가 갑자기 끊겨 자동매매와 잔고 기록이 멈춘 일).
+# 만료 2주 전·1주 전 오전 9시(KST)에 텔레그램으로 알린다. 2027년에만 보낸다.
+on:
+  schedule:
+    - cron: "0 0 12 1 *"   # 01-12 09:00 KST
+    - cron: "0 0 19 1 *"   # 01-19 09:00 KST
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 텔레그램 알림
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "schedule" ] && [ "$(date -u +%Y)" != "2027" ]; then echo "2027년이 아니라 건너뜀"; exit 0; fi
+          days=$(( ( $(date -u -d 2027-01-26 +%s) - $(date -u +%s) ) / 86400 ))
+          text="⏰ 모의계좌 만료 ${days}일 전 (2027-01-26)
+
+          한투 50220595(한투 v2)·키움 81372441(키움 국내포트) 모의투자가 끝납니다. 연장이 안 되니 다시 신청하세요.
+          1) 한투: 홈페이지 트레이딩 → 모의투자 신청 → KIS Developers [추가신청하기]로 새 계좌 API 신청
+          2) 키움: 모의투자 다시 신청 → 새 App Key·Secret
+          3) 새 키·계좌번호를 GitHub Secrets(fabot-auto-trade-cloud·fg-dashboard)와 Render(fabot-trade-journal)에 넣기
+          4) 새 계좌가 초기화되면 v2·국내포트 시작일·재원(v2_config.json·kr_config.json)과 대시보드(v2_equity.js)를 다시 맞추기"
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=${text}" > /dev/null
+          echo "보냄: 만료 ${days}일 전"
