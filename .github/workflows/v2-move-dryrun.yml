@@ -60,3 +60,7 @@ jobs:
           echo "===== 시작 전 동작(오늘은 10-26): 자동매매 진입점 ====="
           python -u auto_trade_loop.py --realtime --dry-run 2>&1 | head -5 || true
           python -u auto_trade_loop_kiwoom.py --realtime --dry-run 2>&1 | head -5 || true
+          echo "===== 계좌 체크(보내지 않음) ====="
+          python -u account_check.py --no-send || true
+          echo "===== 이자 추정(dry-run) ====="
+          python -u estimate_interest.py --dry-run || true

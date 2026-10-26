@@ -33,17 +33,29 @@ from kis_price_client import fetch_dividend_schedule
 
 COVERED_CALL_STOCK_CODE = "472150"
 COVERED_CALL_TRADE_KEY = "TIGER 배당커버드콜액티브(472150)"
-ACCOUNTS = ["KIS 모의투자", "키움 모의투자"]
+# 2026-10-26: 옛 규칙 계좌는 끝났다(키움 10-24 만료·한투 10-26 새 계좌로 초기화). 옛 장부로 계속 세면
+# 새 계좌에서 한투 v2가 산 472150을 옛 몫으로 잘못 센다 → 옛 계좌 배당 기록은 멈춘다(지난 기록은 그대로).
+ACCOUNTS: list[str] = []
 # 계좌 시작(KIS 07-23)보다 여유 있게 이른 조회 시작일 — 놓친 과거분도 같이 훑는다.
 SCHEDULE_LOOKBACK_START = "20260701"
 # 2026-10-20 인선 요청: 키움 v2(FA 새 규칙) 검증용 — v2가 산 커버드콜의 배당은 "키움 v2"로 따로 기록하고,
 # 옛 계좌("키움 모의투자")에는 v2 몫을 뺀 옛 규칙 몫만 기록한다. 486290은 분배금에 15.4%가 원천징수된다
 # (2026-07-02 실계좌 입금내역 실측) — 세후로 기록, 472150은 비과세.
-V2_ACCOUNT = "키움 v2"
-V2_LOOKBACK_START = "20261020"
+# 2026-10-26: v2는 한투 새 계좌로 옮겨 10-27부터 새로 시작(장부 '한투 v2'), 키움은 '키움 국내포트'.
+# 두 장부 모두 계좌에 그 전략 하나만 있어 매매기록의 기준일 보유수량 × 실제 주당배당금(세후)으로 기록한다.
+V2_ACCOUNT = "한투 v2"
+V2_LOOKBACK_START = "20261027"
+TAXED = 1 - 0.154
 V2_COVERED_CALLS = [
     ("472150", "TIGER 배당커버드콜액티브(472150)", 1.0),
-    ("486290", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", 1 - 0.154),
+    ("486290", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", TAXED),
+]
+KR_ACCOUNT = "키움 국내포트"
+KR_DISTRIBUTIONS = [   # 국내 상장 해외 ETF 분배금은 15.4% 원천징수, 472150만 비과세(2026-07-02 실계좌 실측)
+    ("472150", "TIGER 배당커버드콜액티브(472150)", 1.0),
+    ("486290", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", TAXED),
+    ("458730", "TIGER 미국배당다우존스(458730)", TAXED),
+    ("379810", "KODEX 미국나스닥100(379810)", TAXED),
 ]
 
 
@@ -178,19 +190,21 @@ def main() -> int:
             ok = False
             print(f"{account} 배당 처리 실패: {exc}")
 
-    try:
-        _v2_dividends(env)
-    except Exception as exc:
-        ok = False
-        print(f"{V2_ACCOUNT} 배당 처리 실패: {exc}")
+    for account, items in ((V2_ACCOUNT, V2_COVERED_CALLS), (KR_ACCOUNT, KR_DISTRIBUTIONS)):
+        try:
+            _v2_dividends(env, account, items)
+        except Exception as exc:
+            ok = False
+            print(f"{account} 배당 처리 실패: {exc}")
 
     return 0 if ok else 1
 
 
-def _v2_dividends(env: dict) -> None:
-    """키움 v2가 산 커버드콜 배당 — v2 매매기록의 기준일 보유수량 × 실제 주당배당금(세후), 실제 지급일로 기록."""
+def _v2_dividends(env: dict, account: str = V2_ACCOUNT, items: list = V2_COVERED_CALLS) -> None:
+    """전략 장부가 산 종목의 배당 — 매매기록의 기준일 보유수량 × 실제 주당배당금(세후), 실제 지급일로 기록."""
+    V2_ACCOUNT = account   # 아래 메시지·기록에 쓰는 이름
     today_s = date.today().isoformat()
-    for code, key, net in V2_COVERED_CALLS:
+    for code, key, net in items:
         trades = _get_trades(env, V2_ACCOUNT, key)
         if not trades:
             print(f"{V2_ACCOUNT}: {code} 매수 기록 없음 — 건너뜁니다.")
@@ -205,8 +219,8 @@ def _v2_dividends(env: dict) -> None:
             if shares <= 0 or amount <= 0:
                 continue
             tax = "" if net == 1.0 else ", 15.4% 원천징수 뒤"
-            memo = (f"v2 배당(예탁원 배당일정 API, 기준일 {div['record_date']} 주당 {div['per_share']:,.0f}원 × "
-                    f"v2 보유 {shares:,.0f}주{tax}, 지급일 {div['pay_date']})")
+            memo = (f"{account} 배당(예탁원 배당일정 API, 기준일 {div['record_date']} 주당 {div['per_share']:,.0f}원 × "
+                    f"보유 {shares:,.0f}주{tax}, 지급일 {div['pay_date']})")
             _log_dividend(env, V2_ACCOUNT, div["pay_date"], amount, memo, ticker=key)
             print(f"{V2_ACCOUNT}: {code} {div['pay_date']} 배당 {amount:,}원 기록 완료 ({shares:,.0f}주)")
 

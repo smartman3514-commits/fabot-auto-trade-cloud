@@ -56,7 +56,7 @@ def _kiwoom_cash_parts() -> tuple[float, float]:
 
 
 def _v2_cash_parts() -> tuple[float, float]:
-    """(원화, 달러) — 키움 v2 장부의 남은 현금. 아직 시작 전이면 0."""
+    """(원화, 달러) — v2 장부(지금은 한투 v2)의 남은 현금. 아직 시작 전이면 0."""
     import fabot_v2 as v2
     cfg = v2.load_config()
     if not cfg.get("usd_capital") and not cfg.get("usd_cash_at_start"):
@@ -121,20 +121,21 @@ def main() -> int:
 
     ok = True
 
+    # 2026-10-26: v2는 한투 새 계좌(장부 '한투 v2'), 키움은 국내 계좌 하나뿐인 '키움 국내포트'.
+    # 한투 현금 중 v2 몫(v2 장부의 칸별 현금)은 '한투 v2'로, 나머지(v2에 안 넣은 원화)는 'KIS 모의투자'로 기록한다.
     try:
+        import fabot_v2 as v2
         krw_cash, usd_cash = _kis_cash_parts()
-        _log_interest_both("KIS 모의투자", krw_cash, usd_cash, dry_run=args.dry_run)
+        v2_krw, v2_usd = _v2_cash_parts()
+        _log_interest_both(v2.V2_ACCOUNT, min(krw_cash, v2_krw), min(usd_cash, v2_usd), dry_run=args.dry_run)
+        _log_interest_both("KIS 모의투자", max(0.0, krw_cash - v2_krw), max(0.0, usd_cash - v2_usd), dry_run=args.dry_run)
     except Exception as exc:
         ok = False
         print(f"KIS 이자 추정 실패: {exc}")
 
     try:
-        krw_cash, usd_cash = _kiwoom_cash_parts()
-        # 2026-10-20 인선 요청: 키움 계좌 현금 중 v2(FA 새 규칙) 몫은 "키움 v2"로 따로 기록하고,
-        # 옛 계좌에는 나머지만 기록한다. v2 몫 = v2 장부의 칸별 현금(달러·원화) 합계.
-        v2_krw, v2_usd = _v2_cash_parts()
-        _log_interest_both("키움 모의투자", max(0.0, krw_cash - v2_krw), max(0.0, usd_cash - v2_usd), dry_run=args.dry_run)
-        _log_interest_both("키움 v2", min(krw_cash, v2_krw), min(usd_cash, v2_usd), dry_run=args.dry_run)
+        krw_cash = float(get_domestic_cash_balance(mode="demo")["ord_alow_amt"])   # 키움은 이제 국내 계좌뿐
+        _log_interest("키움 국내포트", CASH_INTEREST_TRADE_KEY_KRW, "원화", krw_cash, krw_cash, dry_run=args.dry_run)
     except Exception as exc:
         ok = False
         print(f"Kiwoom 이자 추정 실패: {exc}")
