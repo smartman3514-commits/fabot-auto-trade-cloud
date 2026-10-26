@@ -153,6 +153,12 @@ def main() -> None:
         problems, info = check()
     except Exception as exc:                       # 조회 자체가 실패해도 조용히 넘어가지 않는다
         problems, info = [f"체크 실행 실패: {exc}"], []
+    # 2026-10-26 인선: 3달 모의 검증 뒤 실계좌로 — 매일 성과(시작 대비 수익률·MDD), 오늘 매매, 신호까지 거리를 같이 본다
+    try:
+        import performance
+        info = [*info, *performance.report_lines()]
+    except Exception as exc:
+        info = [*info, f"성과 계산 실패: {exc}"]
     title = f"[계좌 체크 · 한투 v2 + 키움 국내포트 · {now}]"
     if problems:
         text = "\n".join([f"🚨 {title}", *[f"- {p}" for p in problems], *info])
