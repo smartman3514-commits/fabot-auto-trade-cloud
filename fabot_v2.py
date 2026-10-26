@@ -97,7 +97,7 @@ KRW_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "KRW")   # 0.10
 CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 2.0, .05      # 목표 = 20% + 80%·S², 5%p 이상 모자라면 채움
 S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
-CAPE_K = 1.7
+CAPE_K = 1.6            # 2026-10-26 인선: 1.7 → 1.6 (v2 엔진 1998~ MDD −46.2% → −40.6%, 연수익 15.3% → 15.0%)
 SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 72, 77, 4
 DCA_WEEKS = 26          # (옛 규칙 — 10-15부터 버크셔는 사다리식)
 RSI_LEN, RSI_ACCEL_TH, RSI_ACCEL_ADD = 14, 30, .40      # FA곡선 RSI 가속 (TQQQ 일봉)
@@ -274,7 +274,7 @@ def fetch_cape_monthly() -> list[tuple[date, float]]:
 
 
 def cape_block() -> dict:
-    """최근 CAPE가 '1871년~직전 달까지 log(CAPE) 직선 추세' × 1.7을 넘으면 막는다.
+    """최근 CAPE가 '1871년~직전 달까지 log(CAPE) 직선 추세' × CAPE_K(1.6)를 넘으면 막는다.
     조회에 실패하면 **막는 쪽**으로 둔다(2026-10 현재 막힌 상태라 실패 시에도 같은 판정)."""
     try:
         cape = fetch_cape_monthly()
