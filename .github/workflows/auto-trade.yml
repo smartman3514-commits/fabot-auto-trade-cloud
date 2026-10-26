@@ -196,7 +196,8 @@ jobs:
               echo "(실행 로그 없음)"
             fi
           }
-          rules_line=$(python -c "import today_signal as t, cooldown as cd; b=t.BUY_THRESHOLDS; s=t.SELL_THRESHOLDS; c=t.COVERED_CALL_ZONE; print(f'[TQQQ] 매수 {b[2]}/{b[1]}/{b[0]} (25%/50%/100%) · 매도 {s[0]}/{s[1]} (50%/전량) · [커버드콜] F&G {c[0]}~{c[1]} 시 {t.COVERED_CALL_ALLOCATION:.0%} · 쿨다운 {cd.COOLDOWN_TRADING_DAYS}일(공통)')")
+          # 2026-10-26: 한투 = 한투 v2, 키움 = 키움 국내포트(같은 v2 규칙, 국내 ETF). 옛 TQQQ 25/50/100% 규칙은 끔.
+          rules_line=$(python -c "import fabot_v2 as v; print(f'v2 규칙 · FA곡선 {v.CURVE_BASE:.0%}+{1 - v.CURVE_BASE:.0%}·S² (RSI≤{v.RSI_ACCEL_TH} +{v.RSI_ACCEL_ADD:.0%}p, CAPE 막기) · TQQQ 칸 {v.SELL_HALF}/{v.SELL_ALL} 매도 · 배당 칸 사다리 · 커버드콜 F&G≤{v.PEACE_HI} {v.PEACE_FRAC:.0%}/{v.PEACE_GAP_DAYS}일 — [한국투자] 한투 v2(해외 ETF) · [키움] 국내포트(국내 ETF)')")
 
           {
             echo "🤖 FABOT 자동매매 실행 ($(date -u -d '+9 hours' '+%Y-%m-%d %H:%M') KST)"
