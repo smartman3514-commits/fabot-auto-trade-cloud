@@ -191,10 +191,11 @@ def _execute(group: list[tuple[Sleeve, Order]], side: str, fg: float, dry_run: b
     from auto_trade_loop_kiwoom import KiwoomChaseOrder
     from cooldown import log_trade
     code = group[0][0].code
+    name = group[0][0].ledger
     book_key = "sel_fpr_bid" if side == "buy" else "buy_fpr_bid"
     ref = int(K.abs_price(K.get_domestic_orderbook(code, mode="demo").get(book_key, "0") or "0"))
     if ref <= 0:
-        _say(f"{code} {'매수' if side == 'buy' else '매도'} 못 함 — 호가 0(국내 정규장 아님)")
+        _say(f"{name} {'매수' if side == 'buy' else '매도'} 못 함 — 호가 0(국내 정규장 아님)")
         return None
     want = [(sl, o, int(o.qty) if side == "sell" else int(o.amount // ref), o.note) for sl, o in group]
     for sl, o, q, _ in want:
@@ -241,7 +242,7 @@ def _execute(group: list[tuple[Sleeve, Order]], side: str, fg: float, dry_run: b
                       memo=f"국내포트 자동실행 — {note}", account=ACCOUNT)
             _say(f"{sl.key} {'매수' if side == 'buy' else '매도'} {n}/{q}주 @ {px:,.0f}원 — {note}")
             print(f"매매기록 저장 완료: {ACCOUNT} {side} {sl.ledger} {n}주")
-    return V._kr_result(code, total, ch.filled_qty, held, record)
+    return V._kr_result(code, total, ch.filled_qty, held, record, name)
 
 
 def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
@@ -270,7 +271,7 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     pending: list = []
     for (code, side), group in sorted(groups.items(), key=lambda kv: kv[0][1] != "sell"):   # 파는 것 먼저
         if any(p and p["key"] == code for p in pending):
-            _say(f"{code} {side} 건너뜀 — 앞선 같은 상품 주문의 체결을 아직 확인 중")
+            _say(f"{group[0][0].ledger} {'매수' if side == 'buy' else '매도'} 건너뜀 — 앞선 같은 상품 주문의 체결을 아직 확인 중")
             continue
         pending.append(_execute(group, side, ctx["fg"], dry_run))
     V.kr_settle(pending)

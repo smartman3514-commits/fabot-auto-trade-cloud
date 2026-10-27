@@ -570,7 +570,7 @@ def _domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str
                   memo=f"v2 자동실행 — {note}", account=V2_ACCOUNT)
         _say(f"{sl.key} 매수 {n}/{qty}주 @ {fill:,.0f}원 — {note}")
         print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {n}주")
-    return _kr_result(sl.key, qty, ch.filled_qty, lambda: _holding_qty(sl.code) - before, record)
+    return _kr_result(sl.key, qty, ch.filled_qty, lambda: _holding_qty(sl.code) - before, record, sl.ledger)
 
 
 # ── 실제 주문 (한투) ────────────────────────────────────────────────────────
@@ -608,12 +608,12 @@ def kr_auction_price(ref: float, side: str) -> int:
     return int(math.ceil(p / tick) * tick if side == "buy" else math.floor(p / tick) * tick)
 
 
-def _kr_result(key: str, qty: int, filled: int, held, record) -> dict | None:
+def _kr_result(key: str, qty: int, filled: int, held, record, name: str = "") -> dict | None:
     """다 체결됐으면 바로 기록하고 None, 남았으면 마지막 정산(kr_settle)에 넘길 값을 돌려준다."""
     if filled >= qty:
         record(filled)
         return None
-    return {"key": key, "qty": qty, "filled": filled, "held": held, "record": record}
+    return {"key": key, "name": name or key, "qty": qty, "filled": filled, "held": held, "record": record}
 
 
 def kr_settle(pending: list[dict]) -> None:
@@ -629,11 +629,11 @@ def kr_settle(pending: list[dict]) -> None:
     for p in pending:
         n = min(max(p["filled"], p["held"]()), p["qty"])
         if n > p["filled"]:
-            print(f"  {p['key']} 보유 수량으로 다시 셈: {p['filled']}주 → {n}주")
+            print(f"  {p['name']} 보유 수량으로 다시 셈: {p['filled']}주 → {n}주")
         if n > 0:
             p["record"](n)
         else:
-            _say(f"{p['key']} 주문이 체결되지 않음")
+            _say(f"{p['name']} 주문이 체결되지 않음")
 
 
 def _kis_overseas_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
@@ -746,7 +746,7 @@ def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note:
                   memo=f"v2 자동실행(한투) — {note}", account=V2_ACCOUNT)
         _say(f"{sl.key} 매수 {n}/{qty}주 @ {fill:,.0f}원 — {note}")
         print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {n}주")
-    return _kr_result(sl.key, qty, ch.filled_qty, held, record)
+    return _kr_result(sl.key, qty, ch.filled_qty, held, record, sl.ledger)
 
 
 def _sell_legacy_tqqq(cfg: dict, pos: dict[str, Position], fg: float, dry_run: bool) -> None:
