@@ -106,7 +106,7 @@ KST = timezone(timedelta(hours=9))
 # 못 찾았지만(로컬 작업 스케줄러에도 없었음), 언제 실행되든 이 가드가 있으면 잘못된
 # 시각의 매수 자체를 막을 수 있다. 실행 창은 15:19~15:30이지만, 스케줄 시작 지연을
 # 고려해 앞뒤로 여유를 둔다.
-DOMESTIC_CLOSE_WINDOW_KST = ((15, 15), (15, 35))
+DOMESTIC_CLOSE_WINDOW_KST = ((15, 5), (15, 35))   # 2026-10-27: 15:19 → 15:10 시작(동시호가 전에 주문)
 
 
 def _within_domestic_close_window(now: datetime | None = None) -> bool:

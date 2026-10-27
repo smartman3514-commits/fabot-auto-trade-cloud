@@ -529,46 +529,111 @@ def _overseas_sell(sl: Sleeve, qty: int, fg: float, dry_run: bool, note: str, ac
     print(f"매매기록 저장 완료: {account} sell {sl.ledger} {ch.filled_qty}주")
 
 
-def _domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
+def _domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> dict | None:
     import kiwoom_client as K
     import fill_price
     from cooldown import log_trade
     from auto_trade_loop_kiwoom import KiwoomChaseOrder
+    from fabot_kr import _holding_qty
     book = K.get_domestic_orderbook(sl.code, mode="demo")
     ref = int(K.abs_price(book.get("sel_fpr_bid", "0") or "0"))
     if ref <= 0:
         _say(f"{sl.key} 매수 못 함 — 호가 0(국내 정규장 아님)")
-        return
+        return None
     qty = int(amount // ref)
     if qty < 1:
         _say(f"{sl.key} 매수 건너뜀 — {amount:,.0f}원으로는 1주({ref:,}원)도 못 삼")
-        return
+        return None
     if dry_run:
         _say(f"{sl.key} 매수 {qty}주 @ 약 {ref:,}원 (dry-run, 주문 안 냄) — {note}")
-        return
-    ch = KiwoomChaseOrder(sl.code, "buy", qty, max_reprices=60, max_seconds=600.0, poll_interval=3.0)
-    ch.run()
-    if ch.filled_qty <= 0:
-        _say(f"{sl.key} 매수 주문이 체결되지 않음")
-        return
-    fill = fill_price.safe(fill_price.kiwoom_domestic, sl.code, getattr(ch, "order_nos", [])) or ref
-    log_trade(ticker=sl.ledger, action="buy", quantity=ch.filled_qty, price=round(fill, 4), fg_score=fg,
-              memo=f"v2 자동실행 — {note}", account=V2_ACCOUNT)
-    _say(f"{sl.key} 매수 {ch.filled_qty}/{qty}주 @ {fill:,.0f}원 — {note}")
-    print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {ch.filled_qty}주")
+        return None
+    before = _holding_qty(sl.code)
+    ch = KiwoomChaseOrder(sl.code, "buy", qty, max_reprices=60, max_seconds=kr_chase_seconds(600.0), poll_interval=3.0)
+    if ch.max_seconds > 0:
+        try:
+            ch.run()
+        except RuntimeError as exc:   # 정정·취소 실패로 멈춰도 마지막 정산에서 보유 수량으로 다시 센다
+            print(f"  호가 추격 중단: {exc}")
+    if ch.filled_qty < qty:
+        rest = qty - ch.filled_qty
+        px = kr_auction_price(max(ref, int(K.abs_price(K.get_domestic_orderbook(sl.code, mode="demo").get("sel_fpr_bid", "0") or "0"))), "buy")
+        r = K.place_domestic_order(sl.code, "buy", rest, price=px, mode="demo")
+        if r.get("return_code") == 0:
+            ch.__dict__.setdefault("order_nos", []).append(r["ord_no"])
+            print(f"  넉넉한 지정가 주문: buy {rest}주 @ {px:,}원 (1% 위, 주문번호 {r['ord_no']})")
+        else:
+            print(f"  넉넉한 지정가 주문 실패: {r.get('return_msg')}")
+
+    def record(n: int) -> None:
+        fill = fill_price.safe(fill_price.kiwoom_domestic, sl.code, getattr(ch, "order_nos", [])) or ref
+        log_trade(ticker=sl.ledger, action="buy", quantity=n, price=round(fill, 4), fg_score=fg,
+                  memo=f"v2 자동실행 — {note}", account=V2_ACCOUNT)
+        _say(f"{sl.key} 매수 {n}/{qty}주 @ {fill:,.0f}원 — {note}")
+        print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {n}주")
+    return _kr_result(sl.key, qty, ch.filled_qty, lambda: _holding_qty(sl.code) - before, record)
 
 
 # ── 실제 주문 (한투) ────────────────────────────────────────────────────────
 
 def wait_kr_close_auction() -> None:
-    """국내장 15:20~15:30은 장 마감 동시호가 — 그 사이 걸린 주문은 15:30에 한꺼번에 체결되고, 취소도 안 된다
-    (10-23 키움 486290 73주가 '미체결'로 끝났다가 15:30에 실제 체결된 사고). 그 창 안이면 15:31까지 기다린다."""
+    """국내장 15:20~15:30은 장 마감 동시호가 — 그 사이 걸린 주문은 15:30에 한꺼번에 체결된다
+    (10-23 키움 486290 73주가 '미체결'로 끝났다가 15:30에 실제 체결된 사고). 15:31 전이면 15:31까지 기다린다."""
     import time
     now = datetime.now(KST)
     until = now.replace(hour=15, minute=31, second=0, microsecond=0)
-    if now.replace(hour=15, minute=19, second=0, microsecond=0) <= now < until:
+    if now < until:
         print(f"  장 마감 동시호가 체결을 기다립니다({until:%H:%M} KST까지).")
         time.sleep((until - now).total_seconds())
+
+
+# 2026-10-27: 486290 매수가 동시호가에서 종가(9,815원)보다 5~10원 낮은 지정가로 걸려 두 계좌 모두 놓쳤다
+# (키움은 15:30 전에 스스로 취소까지 했다). 호가 추격은 동시호가 전(15:19:30)까지만 하고, 남은 수량은
+# 1% 넉넉한 지정가로 한 번만 낸다 — 동시호가는 모두 같은 종가로 체결되므로 넉넉히 써도 더 비싸게 사지 않는다.
+KR_CHASE_UNTIL = (15, 19, 30)
+KR_AUCTION_MARGIN = .01
+
+
+def kr_chase_seconds(max_seconds: float) -> float:
+    """호가 추격에 쓸 수 있는 시간(초). 동시호가 직전(15:19:30 KST)을 넘지 않는다. 0이면 추격하지 않는다."""
+    now = datetime.now(KST)
+    h, m, s = KR_CHASE_UNTIL
+    left = (now.replace(hour=h, minute=m, second=s, microsecond=0) - now).total_seconds()
+    return max(0.0, min(max_seconds, left))
+
+
+def kr_auction_price(ref: float, side: str) -> int:
+    """동시호가용 지정가: 매수는 1% 위로 올림, 매도는 1% 아래로 내림. ETF 호가 단위 2,000원 미만 1원, 이상 5원."""
+    p = ref * (1 + KR_AUCTION_MARGIN if side == "buy" else 1 - KR_AUCTION_MARGIN)
+    tick = 1 if p < 2000 else 5
+    return int(math.ceil(p / tick) * tick if side == "buy" else math.floor(p / tick) * tick)
+
+
+def _kr_result(key: str, qty: int, filled: int, held, record) -> dict | None:
+    """다 체결됐으면 바로 기록하고 None, 남았으면 마지막 정산(kr_settle)에 넘길 값을 돌려준다."""
+    if filled >= qty:
+        record(filled)
+        return None
+    return {"key": key, "qty": qty, "filled": filled, "held": held, "record": record}
+
+
+def kr_settle(pending: list[dict]) -> None:
+    """남은 국내 주문(넉넉한 지정가)을 모든 종목 주문을 낸 뒤 한 번만 기다려, 보유 수량 차이로 세고 기록한다.
+    종목마다 15:31까지 기다리면 다음 종목이 장 마감 뒤로 밀린다."""
+    import time
+    pending = [p for p in pending if p]
+    if not pending:
+        return
+    time.sleep(15)   # 동시호가 전에 낸 넉넉한 지정가는 곧바로 체결된다
+    if any(max(p["filled"], p["held"]()) < p["qty"] for p in pending):
+        wait_kr_close_auction()
+    for p in pending:
+        n = min(max(p["filled"], p["held"]()), p["qty"])
+        if n > p["filled"]:
+            print(f"  {p['key']} 보유 수량으로 다시 셈: {p['filled']}주 → {n}주")
+        if n > 0:
+            p["record"](n)
+        else:
+            _say(f"{p['key']} 주문이 체결되지 않음")
 
 
 def _kis_overseas_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
@@ -637,7 +702,7 @@ def _kis_overseas_sell(sl: Sleeve, qty: int, fg: float, dry_run: bool, note: str
     print(f"매매기록 저장 완료: {account} sell {sl.ledger} {ch.filled_qty}주")
 
 
-def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> None:
+def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> dict | None:
     import asyncio
     import fill_price
     import live_order_executor as L
@@ -645,33 +710,43 @@ def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note:
     ref = int(float(L._get_asking_price(sl.code).get("askp1") or 0))
     if ref <= 0:
         _say(f"{sl.key} 매수 못 함 — 호가 0(국내 정규장 아님)")
-        return
+        return None
     qty = int(amount // ref)
     if qty < 1:
         _say(f"{sl.key} 매수 건너뜀 — {amount:,.0f}원으로는 1주({ref:,}원)도 못 삼")
-        return
+        return None
     if dry_run:
         _say(f"{sl.key} 매수 {qty}주 @ 약 {ref:,}원 (dry-run, 주문 안 냄) — {note}")
-        return
-    before = L.get_holding(sl.code)
-    ch = L.ChaseOrder(sl.code, "buy", qty, max_reprices=60, max_seconds=630.0)
-    asyncio.run(ch.run())
-    filled = ch.filled_qty
-    if filled < qty:   # 동시호가에 걸린 주문은 15:30에 체결된다 → 보유 수량 차이로 다시 센다
-        wait_kr_close_auction()
-        after = L.get_holding(sl.code)
-        delta = (after["qty"] if after else 0) - (before["qty"] if before else 0)
-        if delta > filled:
-            print(f"  보유 수량으로 다시 셈: {filled}주 → {min(delta, qty)}주")
-            filled = min(delta, qty)
-    if filled <= 0:
-        _say(f"{sl.key} 매수 주문이 체결되지 않음")
-        return
-    fill = fill_price.safe(fill_price.kis_domestic, sl.code, getattr(ch, "order_nos", [])) or ref
-    log_trade(ticker=sl.ledger, action="buy", quantity=filled, price=round(fill, 4), fg_score=fg,
-              memo=f"v2 자동실행(한투) — {note}", account=V2_ACCOUNT)
-    _say(f"{sl.key} 매수 {filled}/{qty}주 @ {fill:,.0f}원 — {note}")
-    print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {filled}주")
+        return None
+    h0 = L.get_holding(sl.code)
+    before = h0["qty"] if h0 else 0
+    ch = L.ChaseOrder(sl.code, "buy", qty, max_reprices=60, max_seconds=kr_chase_seconds(630.0))
+    if ch.max_seconds > 0:
+        try:
+            asyncio.run(ch.run())
+        except RuntimeError as exc:   # 정정·취소 실패로 멈춰도 마지막 정산에서 보유 수량으로 다시 센다
+            print(f"  호가 추격 중단: {exc}")
+    if ch.filled_qty < qty:
+        rest = qty - ch.filled_qty
+        px = kr_auction_price(max(ref, int(float(L._get_asking_price(sl.code).get("askp1") or 0))), "buy")
+        try:
+            r = L._place_order(sl.code, "buy", rest, px)
+            ch.__dict__.setdefault("order_nos", []).append(r["ODNO"])
+            print(f"  넉넉한 지정가 주문: buy {rest}주 @ {px:,}원 (1% 위, 주문번호 {r['ODNO']})")
+        except RuntimeError as exc:
+            print(f"  넉넉한 지정가 주문 실패: {exc}")
+
+    def held() -> int:
+        h = L.get_holding(sl.code)
+        return (h["qty"] if h else 0) - before
+
+    def record(n: int) -> None:
+        fill = fill_price.safe(fill_price.kis_domestic, sl.code, getattr(ch, "order_nos", [])) or ref
+        log_trade(ticker=sl.ledger, action="buy", quantity=n, price=round(fill, 4), fg_score=fg,
+                  memo=f"v2 자동실행(한투) — {note}", account=V2_ACCOUNT)
+        _say(f"{sl.key} 매수 {n}/{qty}주 @ {fill:,.0f}원 — {note}")
+        print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {n}주")
+    return _kr_result(sl.key, qty, ch.filled_qty, held, record)
 
 
 def _sell_legacy_tqqq(cfg: dict, pos: dict[str, Position], fg: float, dry_run: bool) -> None:
@@ -719,6 +794,7 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         orders = plan_kr(ctx["pos"], ctx["fg"], ctx["today_kst"])
     if not any(o.side in ("buy", "sell") for o in orders):
         _say("오늘 살 것·팔 것 없음")
+    kr_pending: list = []
     for o in orders:
         if o.side == "hold":
             _say(f"{o.sleeve} 대기 — {o.note}")
@@ -727,7 +803,8 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         elif sl[o.sleeve].currency == "USD":
             buy_us(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
         else:
-            buy_kr(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
+            kr_pending.append(buy_kr(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note))
+    kr_settle(kr_pending)
 
 
 CONFIG_OVERRIDE: dict = {}

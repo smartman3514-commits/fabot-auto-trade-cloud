@@ -113,7 +113,7 @@ KST = timezone(timedelta(hours=9))
 # auto_trade_loop.py(KIS)와 같은 이유(2026-08-31) — 국내장이 열려 있는 시간대(09:00~15:30)라면
 # 호가가 정상적으로 잡혀서 기존의 "호가 0 = 정규장 아님" 체크만으로는 15:19~15:30 종가 실행
 # 창을 벗어난 시각(예: 2026-08-28 12:53 KST 실제 사례)의 매수를 막지 못한다.
-DOMESTIC_CLOSE_WINDOW_KST = ((15, 15), (15, 35))
+DOMESTIC_CLOSE_WINDOW_KST = ((15, 5), (15, 35))   # 2026-10-27: 15:19 → 15:10 시작(동시호가 전에 주문)
 
 
 def _within_domestic_close_window(now: datetime | None = None) -> bool:
