@@ -145,13 +145,13 @@ def band_check(key: str, n_days: int, ret: float, mdd: float, nq: dict, sp: dict
 
 
 def signal_line() -> str:
-    """매매가 나올 거리: F&G, CAPE 막기, 배당 칸 사다리 RSI."""
+    """매매가 나올 거리: F&G, CAPE 막기, 배당 칸 사다리 RSI(v2는 SCHD·버크셔B 각자, 국내포트는 458730)."""
     import today_signal
     fg = today_signal.get_cnn_score()["score"]
     c = v2.cape_block()
     parts = [f"F&G {fg:.0f}(커버드콜은 65 이하·TQQQ 칸 매도는 {v2.SELL_HALF} 이상)"]
     parts.append(f"CAPE {c['cape']} / 기준선 {c['line']:.1f} → 나스닥 칸 {'막힘' if c['hot'] else '열림'}" if c["cape"] else "CAPE 조회 실패")
-    for name, sym in (("SCHD", "SCHD"), ("TIGER 미국배당다우존스", "458730.KS")):
+    for name, sym in (("SCHD", "SCHD"), ("버크셔B", "BRK-B"), ("TIGER 미국배당다우존스", "458730.KS")):
         try:
             h = v2.fetch_daily_closes(sym, "1y")
             parts.append(f"{name} RSI {v2.rsi_wilder([x for _, x in h]):.0f}(사다리 첫 매수 {v2.LAD_RSI} 이하)")

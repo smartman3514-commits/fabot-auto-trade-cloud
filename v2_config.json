@@ -2,7 +2,6 @@
   "start_date": "2026-10-27",
   "broker": "kis",
   "account": "한투 v2",
-  "defense_stock": "SCHD",
   "usd_capital": 100000.0,
   "krw_capital": null,
   "fx": 1322.45,
