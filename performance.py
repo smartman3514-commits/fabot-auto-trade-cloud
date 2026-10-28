@@ -154,7 +154,8 @@ def signal_line() -> str:
     for name, sym in (("SCHD", "SCHD"), ("버크셔B", "BRK-B"), ("TIGER 미국배당다우존스", "458730.KS")):
         try:
             h = v2.fetch_daily_closes(sym, "1y")
-            parts.append(f"{name} RSI {v2.rsi_wilder([x for _, x in h]):.0f}(사다리 첫 매수 {v2.LAD_RSI} 이하)")
+            # 10-28: 점검 시각엔 그날 장이 아직이라 전날 종가 기준이다(실제 매매는 마감 무렵 현재가를 붙여 계산) — 기준일을 밝혀 차트와 헷갈리지 않게
+            parts.append(f"{name} RSI {v2.rsi_wilder([x for _, x in h]):.0f}({h[-1][0].month}/{h[-1][0].day} 종가 기준, 사다리 첫 매수 {v2.LAD_RSI} 이하)")
         except Exception:
             parts.append(f"{name} RSI 조회 실패")
     return " · ".join(parts)
