@@ -123,6 +123,15 @@ jobs:
           wait $kiwoom_pid || kiwoom_rc=$?
           echo "===== 한국투자 (exit $kis_rc) ====="; cat kis_result.txt
           echo "===== 키움 (exit $kiwoom_rc) ====="; cat kiwoom_result.txt
+          # 2026-11-02: 10-27 한투 v2가 "v2 오류로 중단"(486290 정정 실패·장종료)으로 죽었는데 이 단계가
+          # 종료 코드를 찍기만 해서 실행 결과는 success였다. 오류로 끝났거나 주문이 체결되지 않았으면
+          # 실패로 끝내 Actions에서 빨간불로 보이게 한다. 뒤 단계(알림·기록)는 모두 if: always() 라 그대로 돈다.
+          echo "$kis_rc" > kis_rc.txt; echo "$kiwoom_rc" > kiwoom_rc.txt
+          if [ "$kis_rc" != 0 ] || [ "$kiwoom_rc" != 0 ] \
+             || grep -qs "체결되지 않음\|오류로 중단" kis_result.txt kiwoom_result.txt; then
+            echo "::error::주문 실패 — 한국투자 exit $kis_rc, 키움 exit $kiwoom_rc (위 로그의 '체결되지 않음'·'오류로 중단' 줄 확인)"
+            exit 1
+          fi
 
       - name: Save Kiwoom token cache
         if: always()
@@ -199,7 +208,13 @@ jobs:
           # 2026-10-26: 한투 = 한투 v2, 키움 = 키움 국내포트(같은 v2 규칙, 국내 ETF). 옛 TQQQ 25/50/100% 규칙은 끔.
           rules_line=$(python -c "import fabot_v2 as v; print(f'v2 규칙 · FA곡선 {v.CURVE_BASE:.0%}+{1 - v.CURVE_BASE:.0%}·S² (RSI≤{v.RSI_ACCEL_TH} +{v.RSI_ACCEL_ADD:.0%}p, CAPE 막기) · TQQQ 칸 {v.SELL_HALF}/{v.SELL_ALL} 매도 · 배당 칸 사다리 · 커버드콜 F&G≤{v.PEACE_HI} {v.PEACE_FRAC:.0%}/{v.PEACE_GAP_DAYS}일 — [한국투자] 한투 v2(해외 ETF) · [키움] 국내포트(국내 ETF)')")
 
+          # 오류로 끝났거나 체결되지 않은 주문이 있으면 맨 위에 눈에 띄게 적는다(2026-11-02).
+          failed() {
+            [ "$(cat "$2" 2>/dev/null || echo 0)" != 0 ] || grep -qs "체결되지 않음\|오류로 중단" "$1"
+          }
           {
+            failed kis_result.txt kis_rc.txt && echo "⚠️ [한국투자] 주문 실패 — 아래 줄과 Actions 로그를 확인하세요"
+            failed kiwoom_result.txt kiwoom_rc.txt && echo "⚠️ [키움] 주문 실패 — 아래 줄과 Actions 로그를 확인하세요"
             echo "🤖 FABOT 자동매매 실행 ($(date -u -d '+9 hours' '+%Y-%m-%d %H:%M') KST)"
             echo "현재 규칙: $rules_line"
             echo ""
