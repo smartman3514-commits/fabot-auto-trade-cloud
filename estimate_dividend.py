@@ -24,7 +24,7 @@ kis_price_client.fetch_dividend_schedule 참고). 그래서 "연 15% 가정 월�
 과거분도 같이 훑기 때문에 안전하게 여러 번 돌려도 됨).
 """
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 
@@ -57,6 +57,20 @@ KR_DISTRIBUTIONS = [   # 국내 상장 해외 ETF 분배금은 15.4% 원천징�
     ("458730", "TIGER 미국배당다우존스(458730)", TAXED),
     ("379810", "KODEX 미국나스닥100(379810)", TAXED),
 ]
+
+
+def _entitled_until(record_date: str, settle_days: int = 2) -> str:
+    """배당을 받으려면 기준일에 '결제가 끝난' 주식이어야 한다. 한국 주식·ETF는 T+2 결제라
+    기준일보다 2영업일 앞선 날까지 산 주식만 대상이다(그 다음 날이 배당락일).
+    2026-11-04: 기준일 10-30(금)에 산 472150까지 세어 국내포트 94,575원(맞는 값 49,725원)으로
+    부풀려 기록한 사고 뒤 추가. 주말만 건너뛴다(기준일 바로 앞 평일 공휴일은 드물어 무시 — 생기면 1일 더 앞당겨야 함)."""
+    d = date.fromisoformat(record_date)
+    left = settle_days
+    while left > 0:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:
+            left -= 1
+    return d.isoformat()
 
 
 def _sb_headers(env: dict) -> dict:
@@ -214,13 +228,14 @@ def _v2_dividends(env: dict, account: str = V2_ACCOUNT, items: list = V2_COVERED
         for div in schedule:
             if div["pay_date"] in already or div["pay_date"] > today_s:
                 continue
-            shares = _shares_held_at(trades, div["record_date"])
+            cutoff = _entitled_until(div["record_date"])   # T+2: 이 날까지 산 주식만 기준일에 결제 완료
+            shares = _shares_held_at(trades, cutoff)
             amount = round(shares * div["per_share"] * net)
             if shares <= 0 or amount <= 0:
                 continue
             tax = "" if net == 1.0 else ", 15.4% 원천징수 뒤"
             memo = (f"{account} 배당(예탁원 배당일정 API, 기준일 {div['record_date']} 주당 {div['per_share']:,.0f}원 × "
-                    f"보유 {shares:,.0f}주{tax}, 지급일 {div['pay_date']})")
+                    f"{cutoff}까지 산 {shares:,.0f}주(T+2){tax}, 지급일 {div['pay_date']})")
             _log_dividend(env, V2_ACCOUNT, div["pay_date"], amount, memo, ticker=key)
             print(f"{V2_ACCOUNT}: {code} {div['pay_date']} 배당 {amount:,}원 기록 완료 ({shares:,.0f}주)")
 

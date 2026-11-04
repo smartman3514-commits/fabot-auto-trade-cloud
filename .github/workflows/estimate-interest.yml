@@ -1,14 +1,14 @@
-name: FABOT 추정 현금 이자 기록 (매월 5일)
+name: FABOT 추정 현금 이자 기록 (매일, RP 일 단위)
 
-# 모의계좌는 예수금(현금)에 이자가 안 붙는다 — 그래서 매월 5일에 현금 잔고(원화+달러 환산)의
-# 연 3% 가정을 월할로 계산해서 trades 테이블에 "현금흐름"으로 기록한다(estimate_dividend.py와
-# 같은 방식). 원래 3일이었는데, 배당 기록(estimate-dividend.yml)도 매월 5일이라 한 날짜로
-# 맞춤(2026-09-20 사용자 요청). 시각까지 정확할 필요 없는 월간 작업이라 GitHub Actions
-# 자체 schedule만 쓴다.
+# 모의계좌는 예수금(현금)에 이자가 안 붙는다 — 그래서 연 3%(RP 가정)를 하루 단위로 계산해
+# trades 테이블에 "현금흐름(이자)"로 기록한다(2026-11-04 인선 요청: 매달 5일 한 달치 → 매일 하루치).
+# 마지막 기록 다음 날부터 어제(한국 날짜)까지 그날 끝의 장부 현금 × 3% ÷ 365 를 더해 한 줄로 남긴다.
+# 계좌: 한투 v2(원화·달러 칸), 키움 국내포트(원화), KIS 모의투자(한투 원화 중 v2 밖 나머지).
+# 매일 도는 작업이라 텔레그램은 실패했을 때만 보낸다.
 
 on:
   schedule:
-    - cron: "10 0 5 * *"  # 매월 5일 00:10 UTC = 09:10 KST
+    - cron: "10 0 * * *"  # 매일 00:10 UTC = 09:10 KST
   workflow_dispatch: {}
 
 jobs:
@@ -43,7 +43,9 @@ jobs:
           KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
           KIWOOM_PAPER_OVERSEAS_APP_KEY: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_KEY }}
           KIWOOM_PAPER_OVERSEAS_APP_SECRET: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_SECRET }}
-        run: python estimate_interest.py 2>&1 | tee interest_result.txt
+        run: |
+          set -o pipefail
+          python estimate_interest.py 2>&1 | tee interest_result.txt
 
       - name: Save Kiwoom token cache
         if: always()
@@ -52,8 +54,8 @@ jobs:
           path: .kiwoom_token_cache_demo_domestic.json
           key: kiwoom-domestic-token-${{ github.run_id }}
 
-      - name: Notify Telegram
-        if: always()
+      - name: Notify Telegram (실패했을 때만)
+        if: failure()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
