@@ -76,6 +76,66 @@ def test_late_schedule_is_announced(monkeypatch):
     assert account_check.late_note(datetime(2026, 11, 5, 15, 25, tzinfo=timezone.utc)) == ""
 
 
+# ── 11-06: CAPE 를 놓치지 않게(다시 시도 · 실러 직접 계산 보험 · 대조) — 인터넷 없이 가짜 값으로 ──
+from datetime import date as _date  # noqa: E402
+
+_MULTPL = [(_date(1871 + i // 12, i % 12 + 1, 1), 15.0 * (1.0012 ** i)) for i in range(1858)] + [(_date(2026, 11, 5), 38.79)]
+_SHILLER = [(d, v * 0.999, 7722.72) for d, v in _MULTPL[:-1]]
+
+
+def _patch(monkeypatch, multpl=True, shiller=True, now=38.79, own=38.77):
+    def boom(*a, **k):
+        raise RuntimeError("막힘")
+    monkeypatch.setattr(v2, "fetch_cape_monthly", (lambda: list(_MULTPL)) if multpl else boom)
+    monkeypatch.setattr(v2, "fetch_cape_now", (lambda: {"value": now, "change": -1.83, "prev_close": 40.62,
+                                                       "stamp": "4:00 PM EST, Thu Nov 5", "closed": True}) if multpl else boom)
+    monkeypatch.setattr(v2, "fetch_shiller_monthly", (lambda: list(_SHILLER)) if shiller else boom)
+    monkeypatch.setattr(v2, "own_cape", lambda sh: own)
+
+
+def test_normal_uses_multpl_and_shows_own(monkeypatch):
+    _patch(monkeypatch)
+    c = v2.cape_block()
+    assert c["source"] == "multpl" and c["cape"] == 38.79 and c["own"] == 38.77 and c["mismatch"] is None
+    assert "직접 계산 38.77" in v2.cape_text(c)
+
+
+def test_multpl_down_falls_back_to_own(monkeypatch):
+    _patch(monkeypatch, multpl=False)
+    c = v2.cape_block()
+    assert c["cape"] == 38.77 and c["source"] != "multpl" and c["error"] is None and c["line"] > 0
+    assert "직접 계산 값으로 판정" in c["mismatch"]
+
+
+def test_both_down_blocks(monkeypatch):
+    _patch(monkeypatch, multpl=False, shiller=False)
+    c = v2.cape_block()
+    assert c["hot"] is True and c["cape"] is None and "막는 쪽" in c["error"]
+
+
+def test_big_gap_is_flagged(monkeypatch):
+    _patch(monkeypatch, own=35.0)
+    assert "2% 넘게 다름" in v2.cape_block()["mismatch"]
+
+
+def test_retry_then_success(monkeypatch):
+    n = {"k": 0}
+
+    class R:
+        status_code = 200
+        def raise_for_status(self):
+            pass
+
+    def get(url, **k):
+        n["k"] += 1
+        if n["k"] < 3:
+            raise v2.requests.Timeout("시간 초과")
+        return R()
+    monkeypatch.setattr(v2.requests, "get", get)
+    monkeypatch.setattr(v2.time, "sleep", lambda s: None)
+    assert v2._get("http://x").status_code == 200 and n["k"] == 3
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-q"]))

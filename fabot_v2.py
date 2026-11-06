@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -258,10 +259,23 @@ def fear_score(fg_now: float, fg_history: list[tuple[date, float]], tqqq_now: fl
 
 # ── CAPE 막기 ────────────────────────────────────────────────────────────────
 
+def _get(url: str, tries: int = 3, timeout: int = 25) -> requests.Response:
+    """2026-11-06: CAPE 를 놓치지 않게 — 일시 오류(시간 초과·5xx)면 3·10초 쉬고 다시(최대 3번)."""
+    last = None
+    for k in range(tries):
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if k < tries - 1:
+                time.sleep((3, 10)[min(k, 1)])
+    raise RuntimeError(f"{url} {tries}번 시도 실패: {last}")
+
+
 def fetch_cape_monthly() -> list[tuple[date, float]]:
-    r = requests.get("https://www.multpl.com/shiller-pe/table/by-month",
-                     headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
-    r.raise_for_status()
+    r = _get("https://www.multpl.com/shiller-pe/table/by-month")
     rows = re.findall(r"<td>([A-Z][a-z]{2} \d{1,2}, \d{4})</td>\s*<td>\s*(?:&#x2002;|<abbr[^>]*>[^<]*</abbr>)?\s*([\d.]+)",
                       r.text)
     out = sorted((datetime.strptime(d, "%b %d, %Y").date(), float(v)) for d, v in rows)
@@ -288,9 +302,52 @@ def parse_cape_now(html: str) -> dict:
 
 
 def fetch_cape_now() -> dict:
-    r = requests.get(CAPE_PAGE, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
-    r.raise_for_status()
-    return parse_cape_now(r.text)
+    return parse_cape_now(_get(CAPE_PAGE).text)
+
+
+# ── 보험: 실러 교수 원자료 + S&P500 가격으로 직접 계산(multpl 을 못 읽을 때·대조용) ──
+# CAPE = S&P500 가격 ÷ 10년 평균 실질 이익. 분모는 한 달에 아주 조금만 변하므로
+# '오늘 CAPE = 오늘 S&P500 × (실러 지난달 CAPE ÷ 실러 지난달 평균 S&P500)' 으로 계산한다.
+# 2026-11-06 확인: 11-05 직접 계산 38.77 vs multpl 38.79(−0.06%), 최근 36개월 월별 최대 차이 0.78%.
+SHILLER_PAGE = "https://shillerdata.com/"
+CAPE_CROSSCHECK_PCT = 2.0
+
+
+def fetch_shiller_monthly() -> list[tuple[date, float, float]]:
+    """(그 달 1일, CAPE, 그 달 평균 S&P500). shillerdata.com 첫 화면의 ie_data.xls 링크를 따라간다(주소가 가끔 바뀜)."""
+    import io
+    import pandas as pd
+    page = _get(SHILLER_PAGE).text
+    m = re.search(r'href="([^"]*ie_data\.xls[^"]*)"', page)
+    if not m:
+        raise RuntimeError("shillerdata.com 에서 ie_data.xls 링크를 찾지 못함")
+    url = m[1] if m[1].startswith("http") else "https:" + m[1]
+    x = pd.read_excel(io.BytesIO(_get(url, timeout=60).content), sheet_name="Data", header=None)
+    hdr = [str(v).strip() for v in x.iloc[7]]
+    ci = hdr.index("CAPE")
+    out = []
+    for _, r in x.iloc[8:].iterrows():
+        try:
+            ym, p, c = f"{float(r[0]):.2f}", float(r[1]), float(r[ci])
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(p) or math.isnan(c):
+            continue
+        out.append((date(int(ym[:4]), int(ym[5:7]), 1), c, p))
+    if len(out) < 600:
+        raise RuntimeError(f"실러 CAPE 기록이 너무 적음({len(out)}개)")
+    return out
+
+
+def spx_now() -> float:
+    """S&P500 지금 값(장중이면 장중, 마감 뒤면 종가) — 야후 regularMarketPrice."""
+    r = _get("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=5d&interval=1d")
+    return float(r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"])
+
+
+def own_cape(shiller: list[tuple[date, float, float]]) -> float:
+    _, c, p = shiller[-1]
+    return spx_now() * c / p
 
 
 def cape_block() -> dict:
@@ -300,27 +357,51 @@ def cape_block() -> dict:
     2026-11-06: 지금 CAPE 는 multpl 첫 화면(사람이 보는 숫자)과 그 시각을 함께 읽는다. 11-05 계좌 체크가 미국장
     중간(10:25 ET)에 돌아 장중 값 40.13 을 '시각 없이' 보여 줬고, 장 마감 뒤 사이트는 종가 38.79 를 보여 줘서
     '틀린 숫자' 로 보였다. 이제 숫자 옆에 사이트 시각과 종가/장중을 붙이고, 장중이면 직전 종가도 같이 쓴다.
-    표(by-month) 맨 윗줄과 첫 화면 숫자가 다르면 그것도 알린다. 판정(막힘/열림)과 기준선 계산 방식은 그대로다."""
+    표(by-month) 맨 윗줄과 첫 화면 숫자가 다르면 그것도 알린다. 판정(막힘/열림)과 기준선 계산 방식은 그대로다.
+
+    2026-11-06(인선: 판정은 그대로, 값만 잘 받아오기): multpl 을 3번까지 다시 읽고, 그래도 못 읽으면 실러 원자료 +
+    S&P500 으로 직접 계산한 값으로 판정한다(기준선도 실러 월별 CAPE 로). 둘 다 읽히면 서로 2% 넘게 다를 때 알린다."""
+    out = {"cape": None, "line": None, "as_of": None, "error": None, "stamp": None, "closed": None,
+           "prev_close": None, "mismatch": None, "source": "multpl", "own": None}
+    notes = []
+    series = None
     try:
-        cape = fetch_cape_monthly()
-        vals = np.log([v for _, v in cape])
-        t = np.arange(len(vals), dtype=float)
-        b, a = np.polyfit(t[:-1], vals[:-1], 1)
-        trend = math.exp(a + b * t[-1])
-        last_d, last_v = cape[-1]
-        out = {"cape": last_v, "line": trend * CAPE_K, "as_of": last_d, "error": None,
-               "stamp": None, "closed": None, "prev_close": None, "mismatch": None}
+        series = [(d, v) for d, v in fetch_cape_monthly()]
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"multpl 표 조회 실패({exc})")
+    shiller = None
+    try:
+        shiller = fetch_shiller_monthly()
+        out["own"] = round(own_cape(shiller), 2)
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"직접 계산(실러) 실패({exc})")
+    if series is None:
+        if shiller is None or out["own"] is None:
+            return {"hot": True, "cape": None, "line": None, "as_of": None,
+                    "error": "CAPE 조회 실패 — 매수를 막는 쪽으로 둠: " + " · ".join(notes)}
+        # 실러 월별(지난달까지) + 오늘 직접 계산 값을 multpl 표와 같은 모양으로
+        series = [(d, c) for d, c, _ in shiller] + [(date.today(), out["own"])]
+        out["source"] = "실러 원자료+S&P500 직접 계산"
+    vals = np.log([v for _, v in series])
+    t = np.arange(len(vals), dtype=float)
+    b, a = np.polyfit(t[:-1], vals[:-1], 1)
+    out["line"] = math.exp(a + b * t[-1]) * CAPE_K
+    out["as_of"], out["cape"] = series[-1]
+    if out["source"] == "multpl":
         try:
             now = fetch_cape_now()
-            if abs(now["value"] - last_v) > 0.005:
-                out["mismatch"] = f"표 맨 윗줄 {last_v} ≠ 첫 화면 {now['value']}"
+            if abs(now["value"] - out["cape"]) > 0.005:
+                notes.append(f"표 맨 윗줄 {out['cape']} ≠ 첫 화면 {now['value']}")
             out.update(cape=now["value"], stamp=now["stamp"], closed=now["closed"], prev_close=now["prev_close"])
-        except Exception as exc:                 # 첫 화면을 못 읽어도 표 값으로 판정은 한다
-            out["mismatch"] = f"첫 화면 조회 실패({exc}) — 표 값 사용"
-        out["hot"] = out["cape"] > out["line"]
-        return out
-    except Exception as exc:
-        return {"hot": True, "cape": None, "line": None, "as_of": None, "error": f"CAPE 조회 실패 — 매수를 막는 쪽으로 둠: {exc}"}
+        except Exception as exc:  # noqa: BLE001 — 첫 화면을 못 읽어도 표 값으로 판정은 한다
+            notes.append(f"첫 화면 조회 실패({exc}) — 표 값 사용")
+        if out["own"] and abs(out["own"] / out["cape"] - 1) * 100 > CAPE_CROSSCHECK_PCT:
+            notes.append(f"multpl {out['cape']} 과 직접 계산 {out['own']} 이 {CAPE_CROSSCHECK_PCT:.0f}% 넘게 다름")
+    else:
+        notes.append("multpl 대신 직접 계산 값으로 판정")
+    out["mismatch"] = " · ".join(notes) or None
+    out["hot"] = out["cape"] > out["line"]
+    return out
 
 
 def cape_text(c: dict) -> str:
@@ -331,8 +412,12 @@ def cape_text(c: dict) -> str:
         when = f"multpl {c['stamp']} {'종가' if c['closed'] else '장중 — 미국장이 열려 있어 계속 바뀜'}"
         if not c["closed"]:
             when += f", 직전 종가 {c['prev_close']:.2f}"
+    elif c.get("source", "multpl") != "multpl":
+        when = c["source"]
     else:
         when = f"multpl 표 {c['as_of']}"
+    if c.get("own") and c.get("source", "multpl") == "multpl":
+        when += f" · 직접 계산 {c['own']:.2f}"
     warn = f" ⚠️ {c['mismatch']}" if c.get("mismatch") else ""
     return f"CAPE {c['cape']:.2f}({when}) / 기준선 {c['line']:.1f} → {'막힘' if c['hot'] else '열림'}{warn}"
 
