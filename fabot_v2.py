@@ -214,11 +214,26 @@ def fetch_daily_closes(ticker: str, rng: str = "3y") -> list[tuple[date, float]]
     r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range={rng}&interval=1d",
                      headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
     r.raise_for_status()
-    res = r.json()["chart"]["result"][0]
-    out = []
-    for ts, c in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]):
-        if c:
-            out.append((datetime.fromtimestamp(ts, tz=timezone.utc).date(), float(c)))
+    return closes_from_chart(r.json()["chart"]["result"][0])
+
+
+def closes_from_chart(res: dict) -> list[tuple[date, float]]:
+    """야후 일봉에서 (날짜, 종가). 비어 있는 칸(None)은 건너뛴다.
+
+    2026-11-06: 장이 끝났는데 마지막 일봉 종가 칸이 비어 있는 때가 있다 — 11-05 장 마감 13시간 뒤에도 SCHD·TQQQ 의
+    11-05 칸이 None 이고, 종가(SCHD 35.42, TQQQ 50.465)는 meta.regularMarketPrice 에만 있었다. 그대로 두면
+    RSI·공포 점수가 하루 묵은 값(11-04)으로 계산된다. 그래서 '마지막 칸이 비었고, 그 장이 끝났고
+    (regularMarketTime ≥ 그 장의 끝), 그 칸이 바로 그 장' 일 때만 meta 종가로 채운다. 장중에는 채우지 않는다."""
+    ts_list = res.get("timestamp") or []
+    closes = res["indicators"]["quote"][0]["close"]
+    out = [(datetime.fromtimestamp(ts, tz=timezone.utc).date(), float(c)) for ts, c in zip(ts_list, closes) if c]
+    meta = res.get("meta") or {}
+    reg = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    price, at = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
+    if ts_list and closes and closes[-1] is None and price and at and reg.get("start") is not None and reg.get("end") is not None:
+        last = ts_list[-1]
+        if reg["start"] <= last < reg["end"] and at >= reg["end"]:
+            out.append((datetime.fromtimestamp(last, tz=timezone.utc).date(), float(price)))
     return out
 
 
