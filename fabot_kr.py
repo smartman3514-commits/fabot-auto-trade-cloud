@@ -159,7 +159,7 @@ def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: di
 def print_status(cfg: dict, ctx: dict) -> None:
     f, c, pos, prices = ctx["fear"], ctx["cape"], ctx["pos"], ctx["prices"]
     acc = f" → RSI 가속 +{V.RSI_ACCEL_ADD:.0%}p" if f["rsi"] <= V.RSI_ACCEL_TH else ""
-    cape_txt = f"CAPE {c['cape']} / 기준선 {c['line']:.1f} → {'막힘' if c['hot'] else '열림'}" if c["cape"] else c["error"]
+    cape_txt = V.cape_text(c)
     print(f"국내포트 F&G {ctx['fg']:.1f} · S {f['S']:.2f} → 목표 투자 비중 {f['target']:.0%} · "
           f"TQQQ RSI {f['rsi']:.0f}(종가 {ctx['tqqq_close'][0]}){acc} · {cape_txt}")
     total = sum(p.cash + p.qty * prices[k] for k, p in pos.items())

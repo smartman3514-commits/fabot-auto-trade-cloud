@@ -144,18 +144,30 @@ def band_check(key: str, n_days: int, ret: float, mdd: float, nq: dict, sp: dict
     return f"   시뮬 대조({n}거래일 칸): " + " · ".join(parts)
 
 
+def session_open(sym: str, day, now=None) -> bool:
+    """그 봉의 장이 아직 안 끝났으면 True. 미국 종목은 뉴욕 16:00, .KS 는 서울 15:30 에 끝난다."""
+    from zoneinfo import ZoneInfo
+    tz, close = (ZoneInfo("Asia/Seoul"), (15, 30)) if sym.endswith(".KS") else (ZoneInfo("America/New_York"), (16, 0))
+    now = now or datetime.now(tz)
+    end = datetime(day.year, day.month, day.day, *close, tzinfo=tz)
+    return now.astimezone(tz) < end
+
+
 def signal_line() -> str:
     """매매가 나올 거리: F&G, CAPE 막기, 배당 칸 사다리 RSI(v2는 SCHD·버크셔B 각자, 국내포트는 458730)."""
     import today_signal
     fg = today_signal.get_cnn_score()["score"]
     c = v2.cape_block()
     parts = [f"F&G {fg:.0f}(커버드콜은 65 이하·TQQQ 칸 매도는 {v2.SELL_HALF} 이상)"]
-    parts.append(f"CAPE {c['cape']} / 기준선 {c['line']:.1f} → 나스닥 칸 {'막힘' if c['hot'] else '열림'}" if c["cape"] else "CAPE 조회 실패")
+    parts.append(v2.cape_text(c).replace(" → ", " → 나스닥 칸 ", 1))
     for name, sym in (("SCHD", "SCHD"), ("버크셔B", "BRK-B"), ("TIGER 미국배당다우존스", "458730.KS")):
         try:
             h = v2.fetch_daily_closes(sym, "1y")
             # 10-28: 점검 시각엔 그날 장이 아직이라 전날 종가 기준이다(실제 매매는 마감 무렵 현재가를 붙여 계산) — 기준일을 밝혀 차트와 헷갈리지 않게
-            parts.append(f"{name} RSI {v2.rsi_wilder([x for _, x in h]):.0f}({h[-1][0].month}/{h[-1][0].day} 종가 기준, 사다리 첫 매수 {v2.LAD_RSI} 이하)")
+            # 11-06: 점검이 늦게 돌아 장중이면 마지막 봉은 종가가 아니다(11-05 00:25 KST 'SCHD 11/5 종가 기준' 이 실제론 장중) — 그대로 밝힌다
+            d = h[-1][0]
+            kind = "장중 값" if session_open(sym, d) else "종가 기준"
+            parts.append(f"{name} RSI {v2.rsi_wilder([x for _, x in h]):.0f}({d.month}/{d.day} {kind}, 사다리 첫 매수 {v2.LAD_RSI} 이하)")
         except Exception:
             parts.append(f"{name} RSI 조회 실패")
     return " · ".join(parts)

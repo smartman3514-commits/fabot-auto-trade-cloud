@@ -255,9 +255,37 @@ def fetch_cape_monthly() -> list[tuple[date, float]]:
     return out
 
 
+CAPE_PAGE = "https://www.multpl.com/shiller-pe"
+
+
+def parse_cape_now(html: str) -> dict:
+    """multpl 첫 화면의 'Current Shiller PE Ratio: 38.79 -1.83 (-4.51%) / 4:00 PM EST, Thu Nov 5' 를 그대로 읽는다.
+    사람이 사이트에서 보는 바로 그 숫자다. 시각이 4:00 PM 이면 그날 종가, 아니면 장중 값(미국장이 열려 있어 계속 바뀜)."""
+    m = re.search(r'<div id="current">.*?</b>\s*([\d.]+)(.*?)<div id="timestamp">\s*([^<]+?)\s*</div>', html, re.S)
+    if not m:
+        raise RuntimeError("multpl 첫 화면에서 현재 CAPE 를 찾지 못함(화면 모양이 바뀌었을 수 있음)")
+    value = float(m[1])
+    ch = re.search(r"([+-]?\d+(?:\.\d+)?)\s*\(", m[2])
+    change = float(ch[1]) if ch else 0.0
+    stamp = " ".join(m[3].split())                      # "4:00 PM EST, Thu Nov 5"
+    return {"value": value, "change": change, "prev_close": round(value - change, 2), "stamp": stamp,
+            "closed": stamp.startswith("4:00 PM")}
+
+
+def fetch_cape_now() -> dict:
+    r = requests.get(CAPE_PAGE, headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
+    r.raise_for_status()
+    return parse_cape_now(r.text)
+
+
 def cape_block() -> dict:
     """최근 CAPE가 '1871년~직전 달까지 log(CAPE) 직선 추세' × CAPE_K(1.6)를 넘으면 막는다.
-    조회에 실패하면 **막는 쪽**으로 둔다(2026-10 현재 막힌 상태라 실패 시에도 같은 판정)."""
+    조회에 실패하면 **막는 쪽**으로 둔다(2026-10 현재 막힌 상태라 실패 시에도 같은 판정).
+
+    2026-11-06: 지금 CAPE 는 multpl 첫 화면(사람이 보는 숫자)과 그 시각을 함께 읽는다. 11-05 계좌 체크가 미국장
+    중간(10:25 ET)에 돌아 장중 값 40.13 을 '시각 없이' 보여 줬고, 장 마감 뒤 사이트는 종가 38.79 를 보여 줘서
+    '틀린 숫자' 로 보였다. 이제 숫자 옆에 사이트 시각과 종가/장중을 붙이고, 장중이면 직전 종가도 같이 쓴다.
+    표(by-month) 맨 윗줄과 첫 화면 숫자가 다르면 그것도 알린다. 판정(막힘/열림)과 기준선 계산 방식은 그대로다."""
     try:
         cape = fetch_cape_monthly()
         vals = np.log([v for _, v in cape])
@@ -265,9 +293,33 @@ def cape_block() -> dict:
         b, a = np.polyfit(t[:-1], vals[:-1], 1)
         trend = math.exp(a + b * t[-1])
         last_d, last_v = cape[-1]
-        return {"hot": last_v > trend * CAPE_K, "cape": last_v, "line": trend * CAPE_K, "as_of": last_d, "error": None}
+        out = {"cape": last_v, "line": trend * CAPE_K, "as_of": last_d, "error": None,
+               "stamp": None, "closed": None, "prev_close": None, "mismatch": None}
+        try:
+            now = fetch_cape_now()
+            if abs(now["value"] - last_v) > 0.005:
+                out["mismatch"] = f"표 맨 윗줄 {last_v} ≠ 첫 화면 {now['value']}"
+            out.update(cape=now["value"], stamp=now["stamp"], closed=now["closed"], prev_close=now["prev_close"])
+        except Exception as exc:                 # 첫 화면을 못 읽어도 표 값으로 판정은 한다
+            out["mismatch"] = f"첫 화면 조회 실패({exc}) — 표 값 사용"
+        out["hot"] = out["cape"] > out["line"]
+        return out
     except Exception as exc:
         return {"hot": True, "cape": None, "line": None, "as_of": None, "error": f"CAPE 조회 실패 — 매수를 막는 쪽으로 둠: {exc}"}
+
+
+def cape_text(c: dict) -> str:
+    """'CAPE 38.79(multpl 4:00 PM EST, Thu Nov 5 종가) / 기준선 36.1 → 막힘' — 사이트와 바로 대조할 수 있게 시각을 붙인다."""
+    if not c.get("cape"):
+        return c.get("error") or "CAPE 조회 실패"
+    if c.get("stamp"):
+        when = f"multpl {c['stamp']} {'종가' if c['closed'] else '장중 — 미국장이 열려 있어 계속 바뀜'}"
+        if not c["closed"]:
+            when += f", 직전 종가 {c['prev_close']:.2f}"
+    else:
+        when = f"multpl 표 {c['as_of']}"
+    warn = f" ⚠️ {c['mismatch']}" if c.get("mismatch") else ""
+    return f"CAPE {c['cape']:.2f}({when}) / 기준선 {c['line']:.1f} → {'막힘' if c['hot'] else '열림'}{warn}"
 
 
 # ── 오늘 할 일 ──────────────────────────────────────────────────────────────
@@ -457,8 +509,7 @@ def print_status(tag: str, cfg: dict, ctx: dict) -> None:
     f = ctx["fear"]
     c = ctx["cape"]
     acc = f" → RSI 가속 +{RSI_ACCEL_ADD:.0%}p" if f["rsi"] <= RSI_ACCEL_TH else ""
-    cape_txt = (f"CAPE {c['cape']} / 기준선 {c['line']:.1f} → {'막힘' if c['hot'] else '열림'}"
-                if c["cape"] else c["error"])
+    cape_txt = cape_text(c)
     print(f"{tag} F&G {ctx['fg']:.1f} · S {f['S']:.2f} → 목표 투자 비중 {f['target']:.0%} · "
           f"TQQQ RSI {f['rsi']:.0f}{acc} · {cape_txt}")
     for line in summary_lines(ctx["pos"], ctx["prices"], cfg["fx"]):

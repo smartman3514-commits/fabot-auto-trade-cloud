@@ -147,8 +147,25 @@ def send(text: str) -> None:
     requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": chat, "text": text[:4000]}, timeout=20)
 
 
+def late_note(now_utc: datetime | None = None) -> str:
+    """GitHub 예비 schedule 이 늦게 돌면 몇 시간 늦었는지 밝힌다(정시 실행은 cron-job.org 몫).
+    2026-11-05: 16:10 KST 예정이 00:25 KST(미국장 중간)에 돌아 CAPE·RSI 가 장중 값으로 찍혔다."""
+    cron = os.environ.get("SCHEDULE", "")
+    if os.environ.get("EVENT") != "schedule" or not cron:
+        return ""
+    minute, hour = (int(x) for x in cron.split()[:2])
+    now = now_utc or datetime.now(timezone.utc)
+    due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if due > now:
+        due -= timedelta(days=1)
+    late = int((now - due).total_seconds() // 60)
+    if late < 30:
+        return ""
+    return f" · ⏰ 예정 {due.astimezone(KST):%H:%M}보다 {late // 60}시간 {late % 60}분 늦게 실행(GitHub 예약 지연)"
+
+
 def main() -> None:
-    now = datetime.now(KST).strftime("%m-%d %H:%M KST")
+    now = datetime.now(KST).strftime("%m-%d %H:%M KST") + late_note()
     try:
         problems, info = check()
     except Exception as exc:                       # 조회 자체가 실패해도 조용히 넘어가지 않는다
