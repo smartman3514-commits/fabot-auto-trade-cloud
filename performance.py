@@ -158,7 +158,7 @@ def signal_line() -> str:
     import today_signal
     fg = today_signal.get_cnn_score()["score"]
     c = v2.cape_block()
-    parts = [f"F&G {fg:.0f}(커버드콜은 65 이하·TQQQ 칸 매도는 {v2.SELL_HALF} 이상)"]
+    parts = [f"F&G {fg:.0f}(커버드콜은 {v2.PEACE_HI} 이하·TQQQ 칸 매도는 {v2.SELL_HALF} 이상)"]
     parts.append(v2.cape_text(c).replace(" → ", " → 나스닥 칸 ", 1))
     for name, sym in (("SCHD", "SCHD"), ("버크셔B", "BRK-B"), ("TIGER 미국배당다우존스", "458730.KS")):
         try:
