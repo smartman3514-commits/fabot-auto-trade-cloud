@@ -1,0 +1,24 @@
+name: 키움 모의 금현물 시세 확인 (조회만, 주문 없음)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 주문은 내지 않는다 — 금현물 종목 기본정보·호가 조회만 한다.
+      - name: Read-only KRX gold quote check
+        env:
+          KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
+          KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
+        run: python probe_kiwoom_gold.py
