@@ -2,6 +2,11 @@ name: 키움 모의 금현물 시세 확인 (조회만, 주문 없음)
 
 on:
   workflow_dispatch:
+    inputs:
+      codes:
+        description: "조회할 종목코드(쉼표로 구분, 비우면 금 99.99_1kg·미니금)"
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -21,4 +26,5 @@ jobs:
         env:
           KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
           KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
+          CODES: ${{ inputs.codes }}
         run: python probe_kiwoom_gold.py

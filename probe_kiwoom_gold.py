@@ -6,10 +6,14 @@
 응답에서는 결과 코드·메시지·이름·가격 관련 필드와 필드 이름 목록만 출력한다(계좌·비밀값 없음).
 """
 import json
+import os
 
 from kiwoom_client import _post_readonly
 
 CODES = {"M04020000": "금 99.99_1kg", "M04020100": "미니금 99.99_100g"}
+# 워크플로 입력 CODES(쉼표로 구분)를 주면 그 종목만 본다 — 예: 411060(ACE KRX금현물 ETF)
+if os.environ.get("CODES"):
+    CODES = {c.strip(): "" for c in os.environ["CODES"].split(",") if c.strip()}
 CALLS = [("ka10001", "/api/dostk/stkinfo", "기본정보"), ("ka10004", "/api/dostk/mrkcond", "호가")]
 SHOW = ("return_code", "return_msg", "stk_cd", "stk_nm", "cur_prc", "base_pric", "pred_pre", "flu_rt", "trde_qty",
         "upl_pric", "lst_pric", "sel_fpr_bid", "buy_fpr_bid", "bid_req_base_tm")
