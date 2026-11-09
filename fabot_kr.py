@@ -35,13 +35,16 @@ from fabot_v2 import KST, Order, Position, Sleeve
 ACCOUNT = "키움 국내포트"
 CONFIG_PATH = Path(__file__).resolve().parent / "kr_config.json"
 LEV = "TIGER 미국나스닥100레버리지(합성)(418660)"
+# 2026-11-09 인선: FA여정 공격형 v1 비중 그대로 + 금 칸(ACE KRX금현물, 규칙은 fabot_v2.gold_plan).
+# 바꾸기 전: TQ .15 · QL .15 · QQ .30 · DIV .30 · CCD .05 · CCN .05. 시작일부터 11-09 까지 산 것은 커버드콜뿐이었다.
 SLEEVES = [
-    Sleeve("TQ", "418660", "KRX", f"{LEV} 파는 칸", .15, "KRW", "curve_sell"),
-    Sleeve("QL", "418660", "KRX", f"{LEV} 안 파는 칸", .15, "KRW", "curve"),
-    Sleeve("QQ", "379810", "KRX", "KODEX 미국나스닥100(379810)", .30, "KRW", "curve"),
-    Sleeve("DIV", "458730", "KRX", "TIGER 미국배당다우존스(458730)", .30, "KRW", "ladder"),
-    Sleeve("CCD", "472150", "KRX", "TIGER 배당커버드콜액티브(472150)", .05, "KRW", "peace"),
-    Sleeve("CCN", "486290", "KRX", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", .05, "KRW", "peace"),
+    Sleeve("TQ", "418660", "KRX", f"{LEV} 파는 칸", .26, "KRW", "curve_sell"),
+    Sleeve("QL", "418660", "KRX", f"{LEV} 안 파는 칸", .26, "KRW", "curve"),
+    Sleeve("QQ", "379810", "KRX", "KODEX 미국나스닥100(379810)", .0557, "KRW", "curve"),
+    Sleeve("DIV", "458730", "KRX", "TIGER 미국배당다우존스(458730)", .0557, "KRW", "ladder"),
+    Sleeve("CCD", "472150", "KRX", "TIGER 배당커버드콜액티브(472150)", .0093, "KRW", "peace"),
+    Sleeve("CCN", "486290", "KRX", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", .0093, "KRW", "peace"),
+    Sleeve("GOLD", "411060", "KRX", "ACE KRX금현물(411060)", .35, "KRW", "gold"),
 ]
 DIV_YAHOO, DIV_NAME = "458730.KS", "TIGER 미국배당다우존스"
 won = lambda v: f"{v:,.0f}원"
@@ -86,6 +89,7 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
         else:
             fr = min(1.0, q / p.qty) if p.qty > 0 else 0.0
             p.cost -= p.cost * fr; p.qty -= q; p.cash += q * px; p.sells.append((d, q, px))
+    V.absorb_into_gold(pos, "KRW")
     return pos
 
 
@@ -105,13 +109,16 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     fear = V.fear_score(info["score"], hist, tq[-1][1], tq)
     fear["rsi"] = V.rsi_wilder([c for _, c in tq])
     return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": V.cape_block(),
-            "div_hist": V.fetch_daily_closes(DIV_YAHOO, "2y"), "today": today, "tqqq_close": tq[-1]}
+            "div_hist": V.fetch_daily_closes(DIV_YAHOO, "2y"), "today": today, "tqqq_close": tq[-1],
+            "gold_rsi": V.gold_rsi(prices["GOLD"], today)}
 
 
 def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: dict[str, float],
-         today: date, div_hist: list, start: date) -> list[Order]:
-    """fabot_v2.plan_us + plan_kr를 국내 ETF 칸에 그대로 옮긴 것."""
+         today: date, div_hist: list, start: date, gold_start: date | None = None, gold_rsi: float | None = None) -> list[Order]:
+    """fabot_v2.plan_us + plan_kr를 국내 ETF 칸에 그대로 옮긴 것 + 금 칸(fabot_v2.gold_plan)."""
     orders: list[Order] = []
+    if "GOLD" in pos:
+        orders.append(V.gold_plan(pos["GOLD"], gold_start or start, today, gold_rsi, prices["GOLD"], money=won))
     tq = pos["TQ"]
     if fg >= V.SELL_HALF and tq.qty > 0:
         last_sell = max((d for d, _, _ in tq.sells), default=None)
@@ -257,7 +264,8 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     print_status(cfg, ctx)
     print("최종 신호: 국내포트 국내장 마감 실행" + (" (dry-run)" if dry_run else ""))
     orders = plan(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today"],
-                  ctx["div_hist"], date.fromisoformat(cfg["start_date"]))
+                  ctx["div_hist"], date.fromisoformat(cfg["start_date"]),
+                  gold_start=date.fromisoformat(cfg.get("gold_start") or cfg["start_date"]), gold_rsi=ctx["gold_rsi"])
     if not any(o.side in ("buy", "sell") for o in orders):
         _say("오늘 살 것·팔 것 없음")
     for o in orders:

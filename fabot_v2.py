@@ -69,17 +69,21 @@ class Sleeve:
 # 두 칸은 같은 사다리 규칙을 각자 자기 가격(RSI)으로 돈다.
 LADDER = {"BRK": {"yahoo": "BRK-B", "name": "버크셔B"}, "SCHD": {"yahoo": "SCHD", "name": "SCHD"}}
 
+# 2026-11-09 인선: FA여정 공격형 v1 비중 그대로 + 금 칸(ACE KRX금현물). 바꾸기 전: TQQQ .15 · QLD .15 · QQQM .30 ·
+# SCHD .15 · 버크셔 .15 · 커버드콜 .05+.05. 금은 모의투자에서 KRX 금현물 주문이 안 돼서(RC9000) 같은 금값을 따라가는
+# ETF(거래대금 1위)로 산다 — 실전 전환 때 KRX 금현물(매매차익 비과세)로 바꿀 것.
 SLEEVES = [
-    Sleeve("TQQQ", "TQQQ", "ND", "TQQQ", .15, "USD", "curve_sell"),
-    Sleeve("QLD", "QLD", "NY", "QLD", .15, "USD", "curve"),
-    Sleeve("QQQ", "QQQM", "ND", "QQQM", .30, "USD", "curve"),   # 10-19 인선: QQQ → QQQM(같은 나스닥100, 1주 약 $290이라 작은 금액도 규칙에 가깝게)
-    Sleeve("SCHD", "SCHD", "NY", "SCHD", .15, "USD", "dca"),      # 10-19 인선: SOXL을 빼고 배당 칸 30 → 10-27 SCHD·버크셔 반반
-    Sleeve("BRK", "BRK/B" if BROKER == "kis" else "BRKb", "NY", "BRK.B", .15, "USD", "dca"),
-    Sleeve("CC_DIV", "472150", "KRX", "TIGER 배당커버드콜액티브(472150)", .05, "KRW", "peace"),
-    Sleeve("CC_NAS", "486290", "KRX", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", .05, "KRW", "peace"),
+    Sleeve("TQQQ", "TQQQ", "ND", "TQQQ", .26, "USD", "curve_sell"),
+    Sleeve("QLD", "QLD", "NY", "QLD", .26, "USD", "curve"),
+    Sleeve("QQQ", "QQQM", "ND", "QQQM", .0557, "USD", "curve"),   # 10-19 인선: QQQ → QQQM(같은 나스닥100, 1주 약 $290이라 작은 금액도 규칙에 가깝게)
+    Sleeve("SCHD", "SCHD", "NY", "SCHD", .02785, "USD", "dca"),     # 10-19 인선: SOXL을 빼고 배당 칸 → 10-27 SCHD·버크셔 반반
+    Sleeve("BRK", "BRK/B" if BROKER == "kis" else "BRKb", "NY", "BRK.B", .02785, "USD", "dca"),
+    Sleeve("CC_DIV", "472150", "KRX", "TIGER 배당커버드콜액티브(472150)", .0093, "KRW", "peace"),
+    Sleeve("CC_NAS", "486290", "KRX", "TIGER 미국나스닥100타겟데일리커버드콜(486290)", .0093, "KRW", "peace"),
+    Sleeve("GOLD", "411060", "KRX", "ACE KRX금현물(411060)", .35, "KRW", "gold"),
 ]
-USD_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "USD")   # 0.90
-KRW_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "KRW")   # 0.10
+USD_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "USD")   # 0.6314
+KRW_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "KRW")   # 0.3686
 
 # 규칙 숫자 (규칙서 10-13 오후판)
 CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 2.0, .05      # 목표 = 20% + 80%·S², 5%p 이상 모자라면 채움
@@ -93,6 +97,9 @@ LAD_RSI, LAD_UNIT, LAD_GAP, LAD_DEADLINE = 40, .10, 21, 252
 LAD_DOWN = [(.90, 1.5), (.85, 2.0), (.80, 2.5), (.75, 3.0), (.70, 3.5), (.65, 4.0), (.60, 4.5), (.55, 5.0), (.50, 5.5)]
 LAD_UP = [1 + .05 * k for k in range(2, 11)]           # +10%, +15%, … +50% → 1회분씩
 OVERSEAS_FEE_MARGIN = .011
+GOLD_YAHOO, GOLD_RSI_MAX, GOLD_SLOTS, GOLD_DEADLINE_DAYS = "411060.KS", 60, 6, 365
+# 금 칸(2026-11-09 인선 · FA여정 엔진과 같은 규칙): 금 칸 시작일부터 한 달마다 금 칸의 1/6 씩 '살 차례'가 쌓이고,
+# 금 값(ACE KRX금현물 일봉) RSI(14) ≤ 60 인 날 쌓인 만큼 산다. 6번째 차례(5달 뒤)부터는 남은 돈 전부, 1년 지나면 RSI 와 상관없이 전부.
 PEACE_LO, PEACE_HI, PEACE_FRAC, PEACE_GAP_DAYS = 0, 50, .10, 3   # 10-19 인선: 35~65 → 65 이하. 11-06 인선: 65 → 50 이하(FA 엔진 1998~: p5 연 14.84→14.86%, MDD 같음)
 
 
@@ -187,7 +194,50 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
         else:
             fr = min(1.0, q / p.qty) if p.qty > 0 else 0.0
             p.cost -= p.cost * fr; p.qty -= q; p.cash += q * px; p.sells.append((d, q, px))
+    absorb_into_gold(pos, "KRW")
     return pos
+
+
+def absorb_into_gold(pos: dict[str, "Position"], currency: str) -> None:
+    """비중을 줄인 칸이 이미 새 재원보다 많이 사 둔 몫(현금이 음수)을 금 칸 재원에서 뺀다(같은 통화 칸만).
+    2026-11-09 공격형 v1 으로 바꿀 때 커버드콜 칸은 이미 새 비중(0.93%)보다 많이 사 둔 상태였다 — 팔지 않고 그대로 두는 대신,
+    그만큼 금 칸이 덜 사서 계좌 전체 현금이 장부보다 모자라지 않게 한다."""
+    g = pos.get("GOLD")
+    if g is None:
+        return
+    short = sum(-p.cash for k, p in pos.items() if k != "GOLD" and p.sleeve.currency == currency and p.cash < 0)
+    if short > 0:
+        g.capital -= short; g.cash -= short
+
+
+def gold_plan(p: "Position", start: date, today: date, rsi: float | None, price: float, money=None) -> "Order":
+    """금 칸 할 일 하나(buy 또는 hold). p.capital 은 금 칸 재원, 산 돈은 p.buys 로 센다(금 칸은 팔지 않는다)."""
+    money = money or (lambda v: f"{v:,.0f}원")
+    months = (today.year - start.year) * 12 + today.month - start.month - (1 if today.day < start.day else 0)
+    slots = max(0, min(GOLD_SLOTS, months + 1))
+    spent = sum(q * px for _, q, px in p.buys)
+    if p.cash < price:
+        return Order("GOLD", "hold", 0, None, f"금 칸 다 삼(남은 돈 {money(p.cash)})")
+    if (today - start).days >= GOLD_DEADLINE_DAYS:
+        return Order("GOLD", "buy", p.cash, None, f"금 칸 시작({start}) 1년 지남 — 남은 돈 전부")
+    if rsi is None:
+        return Order("GOLD", "hold", 0, None, "금 RSI 를 못 구해 오늘은 쉼")
+    allow = p.cash if slots >= GOLD_SLOTS else min(p.cash, p.capital * slots / GOLD_SLOTS - spent)
+    if allow < price:
+        return Order("GOLD", "hold", 0, None, f"이번 차례({slots}/{GOLD_SLOTS}) 몫은 다 삼 — 다음 차례를 기다림")
+    if rsi > GOLD_RSI_MAX:
+        return Order("GOLD", "hold", 0, None, f"살 차례 {money(allow)} 쌓였지만 금 RSI {rsi:.0f} > {GOLD_RSI_MAX} — 내려오면 삼")
+    what = "남은 돈 전부" if slots >= GOLD_SLOTS else f"{slots}/{GOLD_SLOTS} 차례까지 쌓인 몫"
+    return Order("GOLD", "buy", allow, None, f"금 RSI {rsi:.0f} ≤ {GOLD_RSI_MAX} — {what}")
+
+
+def gold_rsi(price_now: float, today: date) -> float | None:
+    """ACE KRX금현물 일봉(야후) + 지금 값으로 RSI(14). 못 구하면 None(그날은 금을 사지 않는다)."""
+    try:
+        return rsi_wilder(closes_with_today(fetch_daily_closes(GOLD_YAHOO, "2y"), price_now, today))
+    except Exception as exc:   # 야후 일시 장애로 다른 칸 주문까지 멈추지 않게
+        print(f"[경고] 금 RSI 계산 실패: {exc}")
+        return None
 
 
 def rsi_wilder(values: list[float], n: int = RSI_LEN) -> float:
@@ -521,8 +571,11 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
     return orders
 
 
-def plan_kr(pos: dict[str, Position], fg_now: float, today: date) -> list[Order]:
+def plan_kr(pos: dict[str, Position], fg_now: float, today: date, gold: dict | None = None) -> list[Order]:
+    """gold = {"start": 금 칸 시작일, "rsi": 금 RSI, "price": ACE KRX금현물 지금 값} — 있으면 금 칸 할 일도 넣는다."""
     orders = []
+    if gold and "GOLD" in pos:
+        orders.append(gold_plan(pos["GOLD"], gold["start"], today, gold["rsi"], gold["price"]))
     for k in ("CC_DIV", "CC_NAS"):
         p = pos[k]
         if not (PEACE_LO <= fg_now <= PEACE_HI):
@@ -602,7 +655,8 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     fear = fear_score(info["score"], hist, prices["TQQQ"], tq_closes)
     fear["rsi"] = rsi_wilder(closes_with_today(tq_closes, prices["TQQQ"], today_us))
     return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": cape_block(),
-            "brk_hist": {k: fetch_daily_closes(v["yahoo"], "2y") for k, v in LADDER.items()}, "today_kst": today_kst, "today_us": today_us}
+            "brk_hist": {k: fetch_daily_closes(v["yahoo"], "2y") for k, v in LADDER.items()}, "today_kst": today_kst, "today_us": today_us,
+            "gold_rsi": gold_rsi(prices["GOLD"], today_kst) if "GOLD" in prices else None}
 
 
 def print_status(tag: str, cfg: dict, ctx: dict) -> None:
@@ -942,7 +996,9 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         orders = plan_us(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today_us"],
                          brk_hist=ctx["brk_hist"], start=date.fromisoformat(cfg["start_date"]))
     else:
-        orders = plan_kr(ctx["pos"], ctx["fg"], ctx["today_kst"])
+        gstart = date.fromisoformat(cfg.get("gold_start") or cfg["start_date"])
+        orders = plan_kr(ctx["pos"], ctx["fg"], ctx["today_kst"],
+                         gold={"start": gstart, "rsi": ctx["gold_rsi"], "price": ctx["prices"]["GOLD"]})
     if not any(o.side in ("buy", "sell") for o in orders):
         _say("오늘 살 것·팔 것 없음")
     kr_pending: list = []
