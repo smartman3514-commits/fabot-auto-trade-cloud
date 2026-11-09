@@ -1,0 +1,31 @@
+name: 키움 모의 금현물 주문 시험 (1g, 체결 안 되는 가격)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "reject = 하한가 아래로 넣어 거절 메시지만 확인 · test = 장중 접수 후 바로 취소"
+        type: choice
+        options: [reject, test]
+        default: reject
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 모의계좌 · 금 99.99_1kg 1g · 체결되지 않는 가격. test 는 접수 직후 취소한다.
+      - name: KRX gold order probe (demo)
+        env:
+          KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
+          KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
+          MODE: ${{ inputs.mode }}
+        run: python probe_kiwoom_gold_order.py --mode "$MODE"
