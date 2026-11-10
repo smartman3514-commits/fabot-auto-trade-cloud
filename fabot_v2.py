@@ -205,7 +205,12 @@ def absorb_into_gold(pos: dict[str, "Position"], currency: str) -> None:
     g = pos.get("GOLD")
     if g is None:
         return
-    short = sum(-p.cash for k, p in pos.items() if k != "GOLD" and p.sleeve.currency == currency and p.cash < 0)
+    short = 0.0
+    for k, p in pos.items():
+        if k != "GOLD" and p.sleeve.currency == currency and p.cash < 0:
+            # 2026-11-10 바로잡음: 넘친 칸의 현금을 0 으로 되돌려야 한다. 예전엔 넘친 칸은 음수 현금 그대로 두고 금 칸에서도
+            # 같은 금액을 빼서 두 번 빠졌다 → 장부 현금이 실제보다 그만큼 적었다(키움 −5,960,844원, 계좌 체크 11-10).
+            short += -p.cash; p.capital += -p.cash; p.cash = 0.0
     if short > 0:
         g.capital -= short; g.cash -= short
 
