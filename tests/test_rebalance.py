@@ -25,3 +25,54 @@ def test_small_drift_does_nothing():
     pos = K.build_ledger({"krw_capital": 500_000_000, "start_date": "2026-10-27"}, [])
     steps, _ = R.plan_kr(pos, PX)
     assert all(s.action == "none" for s in steps)
+
+
+# ── 승인 · 장부 옮김 · 실행일 (2026-11-10) ──────────────────────────────────
+from datetime import date
+
+CFG = {"krw_capital": 500_000_000, "start_date": "2026-10-27", "gold_start": "2026-11-10",
+       "absorb_into_gold": {"CCD": 3925470, "CCN": 2108212}}
+
+
+def _plan(tmp_path, approved):
+    pos = K.build_ledger(CFG, TR)
+    steps, _ = R.plan_kr(pos, PX)
+    p = R.write_plan("kr", K.ACCOUNT, {"KRW": {"date": "2026-12-30", "steps": steps}}, PX, None, 2026, plan_dir=tmp_path)
+    if approved:
+        import json
+        d = json.loads(p.read_text(encoding="utf-8")); d["approved"] = True; p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    return steps
+
+
+def test_ledger_cash_equals_account_cash():
+    pos = K.build_ledger(CFG, TR)
+    assert round(sum(p.cash for p in pos.values())) == 500_000_000 - 8575470 - 6758212 - 1138 * 24750
+
+
+def test_unapproved_plan_never_runs_or_moves(tmp_path):
+    _plan(tmp_path, approved=False)
+    assert R.todays_orders("kr", "KRW", date(2026, 12, 30), plan_dir=tmp_path) is None
+    pos = K.build_ledger(CFG, TR); before = {k: p.cash for k, p in pos.items()}
+    R.apply_moves(pos, "kr", date(2027, 1, 5), plan_dir=tmp_path)
+    assert {k: p.cash for k, p in pos.items()} == before
+
+
+def test_approved_plan_runs_only_on_its_day(tmp_path):
+    _plan(tmp_path, approved=True)
+    assert R.todays_orders("kr", "KRW", date(2026, 12, 29), plan_dir=tmp_path) is None
+    acts = R.todays_orders("kr", "KRW", date(2026, 12, 30), plan_dir=tmp_path)
+    assert acts and acts[0]["action"] == "sell" and acts[-1]["action"] == "buy"   # 파는 것 먼저
+
+
+def test_after_rebalance_each_sleeve_near_target(tmp_path):
+    steps = _plan(tmp_path, approved=True)
+    st = {s.sleeve: s for s in steps}
+    done = TR + [{"trade_date": "2026-12-30", "ticker": K.SLEEVES[[s.key for s in K.SLEEVES].index(k)].ledger,
+                  "action": st[k].action, "quantity": st[k].qty, "price": PX[k]} for k in st if st[k].action in ("sell", "buy")]
+    pos = K.build_ledger(CFG, done)
+    R.apply_moves(pos, "kr", date(2026, 12, 30), plan_dir=tmp_path)
+    total = sum(p.cash + p.qty * PX[k] for k, p in pos.items())
+    for k, p in pos.items():
+        w = next(s.weight for s in K.SLEEVES if s.key == k)
+        assert abs((p.cash + p.qty * PX[k]) - total * w) < PX[k] + 1        # 1주 값 안쪽으로 목표에 맞음
+    assert all(p.cash >= -1 for p in pos.values())                          # 어느 칸도 현금이 음수가 아님

@@ -89,7 +89,9 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
         else:
             fr = min(1.0, q / p.qty) if p.qty > 0 else 0.0
             p.cost -= p.cost * fr; p.qty -= q; p.cash += q * px; p.sells.append((d, q, px))
-    V.absorb_into_gold(pos, "KRW")
+    V.absorb_into_gold(pos, "KRW", cfg.get("absorb_into_gold"))
+    import rebalance
+    rebalance.apply_moves(pos, "kr")          # 연말 비중 맞추기(인선 승인)로 칸 사이에 옮긴 현금
     return pos
 
 
@@ -204,7 +206,7 @@ def _execute(group: list[tuple[Sleeve, Order]], side: str, fg: float, dry_run: b
     if ref <= 0:
         _say(f"{name} {'매수' if side == 'buy' else '매도'} 못 함 — 호가 0(국내 정규장 아님)")
         return None
-    want = [(sl, o, int(o.qty) if side == "sell" else int(o.amount // ref), o.note) for sl, o in group]
+    want = [(sl, o, int(o.qty) if (side == "sell" or o.qty) else int(o.amount // ref), o.note) for sl, o in group]   # 매수도 수량이 정해져 있으면 그대로(연말 비중 맞추기)
     for sl, o, q, _ in want:
         if q < 1:
             _say(f"{sl.key} 매수 건너뜀 — {o.amount:,.0f}원으로는 1주({ref:,}원)도 못 삼")
@@ -262,10 +264,19 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         return
     ctx = gather(cfg, fetch_trades())
     print_status(cfg, ctx)
-    print("최종 신호: 국내포트 국내장 마감 실행" + (" (dry-run)" if dry_run else ""))
-    orders = plan(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today"],
-                  ctx["div_hist"], date.fromisoformat(cfg["start_date"]),
-                  gold_start=date.fromisoformat(cfg.get("gold_start") or cfg["start_date"]), gold_rsi=ctx["gold_rsi"])
+    import rebalance as RB
+    rb = RB.todays_orders("kr", "KRW", ctx["today"])
+    if rb is not None:   # 2026-11-10: 인선이 승인한 연말 비중 맞추기 날 — 계획의 수량만 내고 다른 주문은 쉰다
+        print("최종 신호: 국내포트 연말 비중 맞추기 실행(오늘은 다른 주문 쉼)" + (" (dry-run)" if dry_run else ""))
+        orders = [Order(s_["sleeve"], s_["action"], s_["amount"] if s_["action"] == "buy" else 0, s_["qty"],
+                        f"연말 비중 맞추기 — {s_['note']}") for s_ in rb]
+        if not orders:
+            _say("연말 비중 맞추기: 오늘은 장부에서 칸 사이 현금만 옮김(주문 없음)")
+    else:
+        print("최종 신호: 국내포트 국내장 마감 실행" + (" (dry-run)" if dry_run else ""))
+        orders = plan(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today"],
+                      ctx["div_hist"], date.fromisoformat(cfg["start_date"]),
+                      gold_start=date.fromisoformat(cfg.get("gold_start") or cfg["start_date"]), gold_rsi=ctx["gold_rsi"])
     if not any(o.side in ("buy", "sell") for o in orders):
         _say("오늘 살 것·팔 것 없음")
     for o in orders:

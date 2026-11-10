@@ -33,4 +33,16 @@ jobs:
           echo "===== 한투 v2 (국내 칸) ====="
           python -u fabot_v2.py --market kr
           echo "===== 연말 비중 맞추기 미리보기 (주문 없음) ====="
-          python -u rebalance.py
+          python -u rebalance.py --write
+          echo "===== 연말 비중 맞추기 리허설: 오늘을 실행일로 승인했다고 치고 dry-run (임시 폴더, 주문 없음) ====="
+          export REBALANCE_PLAN_DIR="$RUNNER_TEMP/rb_rehearse"
+          python -u rebalance.py --write --rehearse > /dev/null
+          python -u fabot_kr.py --market kr
+          python -u fabot_v2.py --market kr
+          unset REBALANCE_PLAN_DIR
+
+      - name: 계획 파일 보관(인선 확인용)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebalance-plans
+          path: rebalance_plans/

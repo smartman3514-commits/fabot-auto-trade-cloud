@@ -194,11 +194,13 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
         else:
             fr = min(1.0, q / p.qty) if p.qty > 0 else 0.0
             p.cost -= p.cost * fr; p.qty -= q; p.cash += q * px; p.sells.append((d, q, px))
-    absorb_into_gold(pos, "KRW")
+    absorb_into_gold(pos, "KRW", cfg.get("absorb_into_gold"))
+    import rebalance
+    rebalance.apply_moves(pos, "v2")          # 연말 비중 맞추기(인선 승인)로 칸 사이에 옮긴 현금
     return pos
 
 
-def absorb_into_gold(pos: dict[str, "Position"], currency: str) -> None:
+def absorb_into_gold(pos: dict[str, "Position"], currency: str, fixed: dict | None = None) -> None:
     """비중을 줄인 칸이 이미 새 재원보다 많이 사 둔 몫(현금이 음수)을 금 칸 재원에서 뺀다(같은 통화 칸만).
     2026-11-09 공격형 v1 으로 바꿀 때 커버드콜 칸은 이미 새 비중(0.93%)보다 많이 사 둔 상태였다 — 팔지 않고 그대로 두는 대신,
     그만큼 금 칸이 덜 사서 계좌 전체 현금이 장부보다 모자라지 않게 한다."""
@@ -206,6 +208,13 @@ def absorb_into_gold(pos: dict[str, "Position"], currency: str) -> None:
     if g is None:
         return
     short = 0.0
+    if fixed:   # 2026-11-10: 설정에 적어 둔 그때 금액으로(뒤의 매매와 섞이지 않게)
+        for k, amt in fixed.items():
+            if k in pos and pos[k].sleeve.currency == currency:
+                pos[k].capital += amt; pos[k].cash += amt; short += amt
+        if short > 0:
+            g.capital -= short; g.cash -= short
+        return
     for k, p in pos.items():
         if k != "GOLD" and p.sleeve.currency == currency and p.cash < 0:
             # 2026-11-10 바로잡음: 넘친 칸의 현금을 0 으로 되돌려야 한다. 예전엔 넘친 칸은 음수 현금 그대로 두고 금 칸에서도
@@ -912,7 +921,7 @@ def _kis_overseas_sell(sl: Sleeve, qty: int, fg: float, dry_run: bool, note: str
     print(f"매매기록 저장 완료: {account} sell {sl.ledger} {ch.filled_qty}주")
 
 
-def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str) -> dict | None:
+def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note: str, qty_fixed: int | None = None) -> dict | None:
     import asyncio
     import fill_price
     import live_order_executor as L
@@ -921,7 +930,7 @@ def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note:
     if ref <= 0:
         _say(f"{sl.key} 매수 못 함 — 호가 0(국내 정규장 아님)")
         return None
-    qty = int(amount // ref)
+    qty = int(qty_fixed) if qty_fixed else int(amount // ref)
     if qty < 1:
         _say(f"{sl.key} 매수 건너뜀 — {amount:,.0f}원으로는 1주({ref:,}원)도 못 삼")
         return None
@@ -956,6 +965,57 @@ def _kis_domestic_buy(sl: Sleeve, amount: float, fg: float, dry_run: bool, note:
                   memo=f"v2 자동실행(한투) — {note}", account=V2_ACCOUNT)
         _say(f"{sl.key} 매수 {n}/{qty}주 @ {fill:,.0f}원 — {note}")
         print(f"매매기록 저장 완료: {V2_ACCOUNT} buy {sl.ledger} {n}주")
+    return _kr_result(sl.key, qty, ch.filled_qty, held, record, sl.ledger)
+
+
+def _kis_domestic_sell(sl: Sleeve, qty: int, fg: float, dry_run: bool, note: str) -> dict | None:
+    """한투 국내 매도(2026-11-10, 연말 비중 맞추기용). 매수(_kis_domestic_buy)와 같은 흐름: 호가 추격 → 남으면 1% 아래 지정가 → 보유 수량으로 셈."""
+    import asyncio
+    import fill_price
+    import live_order_executor as L
+    from cooldown import log_trade
+    ref = int(float(L._get_asking_price(sl.code).get("bidp1") or 0))
+    if ref <= 0:
+        _say(f"{sl.key} 매도 못 함 — 호가 0(국내 정규장 아님)")
+        return None
+    if qty < 1:
+        return None
+    if dry_run:
+        _say(f"{sl.key} 매도 {qty}주 @ 약 {ref:,}원 (dry-run, 주문 안 냄) — {note}")
+        return None
+    h0 = L.get_holding(sl.code)
+    before = h0["qty"] if h0 else 0
+    qty = min(qty, before)
+    if qty < 1:
+        _say(f"{sl.key} 매도 건너뜀 — 계좌에 보유 수량 없음")
+        return None
+    ch = L.ChaseOrder(sl.code, "sell", qty, max_reprices=60, max_seconds=kr_chase_seconds(630.0))
+    if ch.max_seconds > 0:
+        try:
+            asyncio.run(ch.run())
+        except RuntimeError as exc:
+            print(f"  호가 추격 중단: {exc}")
+    if ch.filled_qty < qty:
+        rest = qty - ch.filled_qty
+        now_ref = int(float(L._get_asking_price(sl.code).get("bidp1") or 0)) or ref
+        px = kr_auction_price(min(ref, now_ref), "sell")
+        try:
+            r = L._place_order(sl.code, "sell", rest, px)
+            ch.__dict__.setdefault("order_nos", []).append(r["ODNO"])
+            print(f"  넉넉한 지정가 주문: sell {rest}주 @ {px:,}원 (1% 아래, 주문번호 {r['ODNO']})")
+        except RuntimeError as exc:
+            print(f"  넉넉한 지정가 주문 실패: {exc}")
+
+    def held() -> int:
+        h = L.get_holding(sl.code)
+        return before - (h["qty"] if h else 0)
+
+    def record(n: int) -> None:
+        fill = fill_price.safe(fill_price.kis_domestic, sl.code, getattr(ch, "order_nos", [])) or ref
+        log_trade(ticker=sl.ledger, action="sell", quantity=n, price=round(fill, 4), fg_score=fg,
+                  memo=f"v2 자동실행(한투) — {note}", account=V2_ACCOUNT)
+        _say(f"{sl.key} 매도 {n}/{qty}주 @ {fill:,.0f}원 — {note}")
+        print(f"매매기록 저장 완료: {V2_ACCOUNT} sell {sl.ledger} {n}주")
     return _kr_result(sl.key, qty, ch.filled_qty, held, record, sl.ledger)
 
 
@@ -995,7 +1055,15 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     sl = {x.key: x for x in SLEEVES}
     buy_us, sell_us, buy_kr = ((_kis_overseas_buy, _kis_overseas_sell, _kis_domestic_buy) if BROKER == "kis"
                                else (_overseas_buy, _overseas_sell, _domestic_buy))
-    if market == "us":
+    import rebalance as RB
+    rb = RB.todays_orders("v2", "USD" if market == "us" else "KRW", ctx["today_us"] if market == "us" else ctx["today_kst"])
+    if rb is not None:   # 2026-11-10: 인선이 승인한 연말 비중 맞추기 날 — 계획의 수량만 내고 다른 주문은 쉰다
+        print("-> v2 연말 비중 맞추기 실행(오늘은 다른 주문 쉼)")
+        orders = [Order(s_["sleeve"], s_["action"], s_["amount"] if s_["action"] == "buy" else 0, s_["qty"],
+                        f"연말 비중 맞추기 — {s_['note']}") for s_ in rb]
+        if not orders:
+            _say("연말 비중 맞추기: 오늘은 장부에서 칸 사이 현금만 옮김(주문 없음)")
+    elif market == "us":
         if BROKER != "kis":   # 한투 새 계좌에는 옛 규칙 TQQQ가 없다
             _sell_legacy_tqqq(cfg, ctx["pos"], ctx["fg"], dry_run)
         orders = plan_us(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today_us"],
@@ -1010,10 +1078,16 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     for o in orders:
         if o.side == "hold":
             _say(f"{o.sleeve} 대기 — {o.note}")
+        elif o.side == "sell" and sl[o.sleeve].currency == "KRW":
+            if BROKER != "kis":
+                _say(f"{o.sleeve} 국내 매도는 한투에서만 — 건너뜀"); continue
+            kr_pending.append(_kis_domestic_sell(sl[o.sleeve], int(o.qty), ctx["fg"], dry_run, o.note))
         elif o.side == "sell":
             sell_us(sl[o.sleeve], int(o.qty), ctx["fg"], dry_run, o.note)
         elif sl[o.sleeve].currency == "USD":
             buy_us(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note)
+        elif BROKER == "kis" and o.qty:
+            kr_pending.append(_kis_domestic_buy(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note, qty_fixed=int(o.qty)))
         else:
             kr_pending.append(buy_kr(sl[o.sleeve], o.amount, ctx["fg"], dry_run, o.note))
     kr_settle(kr_pending)
