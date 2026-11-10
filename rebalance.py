@@ -169,6 +169,45 @@ def todays_orders(key: str, currency: str, today: date, plan_dir: Path | None = 
     return None
 
 
+def standing(cfg: dict | None) -> bool:
+    """한 번 승인(2026-11-10 인선): approval.approved=true 면 평소 매매와 연말 비중 맞추기를 더 묻지 않는다."""
+    return bool(((cfg or {}).get("approval") or {}).get("approved"))
+
+
+def blocked(cfg: dict | None) -> bool:
+    """실제 돈 계좌처럼 승인이 꼭 필요한데(required) 아직 승인하지 않았으면 True — 주문을 하나도 내지 않는다."""
+    a = (cfg or {}).get("approval") or {}
+    return bool(a.get("required")) and not bool(a.get("approved"))
+
+
+def orders_for_today(key: str, account: str, currency: str, today: date, cfg: dict, pos: dict, prices: dict,
+                     fx: float | None = None, plan_dir: Path | None = None) -> list[dict] | None:
+    """연말 비중 맞추기 실행일이면 오늘의 매도·매수 목록, 아니면 None.
+    승인된 계획 파일이 있으면 그것을, 없고 한 번 승인(standing)이 켜져 있으면 지금 장부·값으로 계획을 만들어(승인됨) 저장하고 쓴다.
+    계획 파일은 장부 기록(칸 사이 현금 옮김)이라, 자동매매 작업이 실행 뒤 저장소에 남긴다."""
+    acts = todays_orders(key, currency, today, plan_dir=plan_dir)
+    if acts is not None:
+        return acts
+    if not standing(cfg) or today.isoformat() != last_trading_day(today.year, currency):
+        return None
+    d = plan_dir or PLAN_DIR
+    if (d / f"{key}_{today.year}.json").exists():
+        return None        # 그해 계획이 이미 있는데 오늘 묶음이 없거나 승인 전 — 새로 덮어쓰지 않는다(장부가 꼬이지 않게)
+    if key == "kr":
+        steps, _ = plan_kr(pos, prices)
+        groups = {"KRW": {"date": today.isoformat(), "steps": steps}}
+    else:
+        su, sk, _ = plan_v2(pos, prices, fx or 1.0)
+        groups = {"KRW": {"date": last_trading_day(today.year, "KRW"), "steps": sk},
+                  "USD": {"date": last_trading_day(today.year, "USD"), "steps": su}}
+    p = write_plan(key, account, groups, prices, fx, today.year, plan_dir=plan_dir, approved=True)
+    plan = json.loads(p.read_text(encoding="utf-8")); plan["approved_note"] = "한 번 승인(standing)으로 자동"
+    p.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
+    apply_moves(pos, key, today, plan_dir=plan_dir)          # 오늘 실행할 장부에도 바로 반영
+    print(f"-> 연말 비중 맞추기 계획을 한 번 승인으로 만들고 실행: {p.name}")
+    return todays_orders(key, currency, today, plan_dir=plan_dir)
+
+
 # ── 보기 ───────────────────────────────────────────────────────────────
 
 def show(title: str, steps: list[Step], money) -> None:

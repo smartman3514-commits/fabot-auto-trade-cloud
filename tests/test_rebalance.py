@@ -76,3 +76,34 @@ def test_after_rebalance_each_sleeve_near_target(tmp_path):
         w = next(s.weight for s in K.SLEEVES if s.key == k)
         assert abs((p.cash + p.qty * PX[k]) - total * w) < PX[k] + 1        # 1주 값 안쪽으로 목표에 맞음
     assert all(p.cash >= -1 for p in pos.values())                          # 어느 칸도 현금이 음수가 아님
+
+
+# ── 한 번 승인(standing, 2026-11-10 인선: "한 번 승인하면 모든 것이 승인되도록") ─────────────────
+def _cfg(approved, required=False):
+    return {**CFG, "approval": {"required": required, "approved": approved}}
+
+
+def test_standing_runs_rebalance_without_asking(tmp_path):
+    pos = K.build_ledger(CFG, TR)
+    acts = R.orders_for_today("kr", K.ACCOUNT, "KRW", date(2026, 12, 30), _cfg(True), pos, PX, plan_dir=tmp_path)
+    assert acts and acts[0]["action"] == "sell"
+    import json
+    plan = json.loads((tmp_path / "kr_2026.json").read_text(encoding="utf-8"))
+    assert plan["approved"] is True and "한 번 승인" in plan["approved_note"]
+
+
+def test_no_standing_no_plan_means_no_rebalance(tmp_path):
+    pos = K.build_ledger(CFG, TR)
+    assert R.orders_for_today("kr", K.ACCOUNT, "KRW", date(2026, 12, 30), _cfg(False), pos, PX, plan_dir=tmp_path) is None
+    assert not (tmp_path / "kr_2026.json").exists()
+
+
+def test_standing_does_nothing_on_other_days(tmp_path):
+    pos = K.build_ledger(CFG, TR)
+    assert R.orders_for_today("kr", K.ACCOUNT, "KRW", date(2026, 12, 29), _cfg(True), pos, PX, plan_dir=tmp_path) is None
+
+
+def test_blocked_only_when_required_and_not_approved():
+    assert R.blocked(_cfg(False, required=True)) is True
+    assert R.blocked(_cfg(True, required=True)) is False
+    assert R.blocked(_cfg(False, required=False)) is False    # 모의 계좌: 지금처럼 매매

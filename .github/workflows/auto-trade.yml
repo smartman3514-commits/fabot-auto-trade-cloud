@@ -75,6 +75,10 @@ jobs:
     needs: gate
     if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    # 2026-11-10: 한 번 승인으로 자동 만든 연말 비중 맞추기 계획 파일(장부 기록)을 저장소에 남기려고 쓰기 권한
+    permissions:
+      contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
 
@@ -155,6 +159,19 @@ jobs:
             python -u account_check.py --after-trade
           else
             echo "이번 실행은 매매가 없어 대조를 건너뜀"
+          fi
+
+      - name: Keep year-end rebalance plan (ledger record)
+        if: always() && github.event_name != 'workflow_dispatch'
+        run: |
+          if [ -n "$(git status --porcelain rebalance_plans 2>/dev/null)" ]; then
+            git config user.name "fabot-auto-trade"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add rebalance_plans
+            git commit -m "연말 비중 맞추기 계획 기록(한 번 승인으로 자동 실행)"
+            git pull --rebase -q && git push
+          else
+            echo "남길 연말 비중 맞추기 계획 없음"
           fi
 
       - name: Save Kiwoom token cache

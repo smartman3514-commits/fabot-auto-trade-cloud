@@ -1056,7 +1056,11 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     buy_us, sell_us, buy_kr = ((_kis_overseas_buy, _kis_overseas_sell, _kis_domestic_buy) if BROKER == "kis"
                                else (_overseas_buy, _overseas_sell, _domestic_buy))
     import rebalance as RB
-    rb = RB.todays_orders("v2", "USD" if market == "us" else "KRW", ctx["today_us"] if market == "us" else ctx["today_kst"])
+    if RB.blocked(cfg):   # 2026-11-10: 실제 돈 계좌인데 한 번 승인 전 — 주문을 하나도 내지 않는다
+        _say("승인 전 — 한 번 승인(approval.approved)이 있어야 주문해요. 오늘은 주문 안 함")
+        return
+    rb = RB.orders_for_today("v2", V2_ACCOUNT, "USD" if market == "us" else "KRW",
+                             ctx["today_us"] if market == "us" else ctx["today_kst"], cfg, ctx["pos"], ctx["prices"], fx=cfg.get("fx"))
     if rb is not None:   # 2026-11-10: 인선이 승인한 연말 비중 맞추기 날 — 계획의 수량만 내고 다른 주문은 쉰다
         print("-> v2 연말 비중 맞추기 실행(오늘은 다른 주문 쉼)")
         orders = [Order(s_["sleeve"], s_["action"], s_["amount"] if s_["action"] == "buy" else 0, s_["qty"],

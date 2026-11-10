@@ -265,7 +265,10 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     ctx = gather(cfg, fetch_trades())
     print_status(cfg, ctx)
     import rebalance as RB
-    rb = RB.todays_orders("kr", "KRW", ctx["today"])
+    if RB.blocked(cfg):   # 2026-11-10: 실제 돈 계좌인데 한 번 승인 전 — 주문을 하나도 내지 않는다
+        _say("승인 전 — 한 번 승인(approval.approved)이 있어야 주문해요. 오늘은 주문 안 함")
+        return
+    rb = RB.orders_for_today("kr", ACCOUNT, "KRW", ctx["today"], cfg, ctx["pos"], ctx["prices"])
     if rb is not None:   # 2026-11-10: 인선이 승인한 연말 비중 맞추기 날 — 계획의 수량만 내고 다른 주문은 쉰다
         print("최종 신호: 국내포트 연말 비중 맞추기 실행(오늘은 다른 주문 쉼)" + (" (dry-run)" if dry_run else ""))
         orders = [Order(s_["sleeve"], s_["action"], s_["amount"] if s_["action"] == "buy" else 0, s_["qty"],
