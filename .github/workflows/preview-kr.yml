@@ -40,6 +40,8 @@ jobs:
           python -u fabot_kr.py --market kr
           python -u fabot_v2.py --market kr
           unset REBALANCE_PLAN_DIR
+          echo "===== 주문 직후 대조 시험 (조회만 · 알림 안 보냄) ====="
+          python -u account_check.py --after-trade --no-send || echo "(대조 결과: 어긋남 — 위 줄 확인)"
 
       - name: 계획 파일 보관(인선 확인용)
         uses: actions/upload-artifact@v4

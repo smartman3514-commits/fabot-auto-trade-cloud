@@ -133,6 +133,30 @@ jobs:
             exit 1
           fi
 
+      # 2026-11-10(FA System 3주차 '주문 뒤 체결 대조'): 이번 실행에서 실제로 매매했으면(매매기록 저장 · 체결되지 않음)
+      # 끝나자마자 장부와 계좌를 대조한다. 정해진 계좌 체크(09:10·16:10)는 GitHub 예약이 몇 시간씩 늦을 때가 있어서,
+      # 어긋남을 그날 바로 알기 위해서다. 맞으면 조용히, 어긋나면 🚨 텔레그램 + 빨간불. 주문은 내지 않는다(조회만).
+      - name: Check ledger vs account right after trades
+        if: always() && github.event_name != 'workflow_dispatch'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          KIS_PAPER_APP_KEY: ${{ secrets.KIS_PAPER_APP_KEY }}
+          KIS_PAPER_APP_SECRET: ${{ secrets.KIS_PAPER_APP_SECRET }}
+          KIS_PAPER_STOCK: ${{ secrets.KIS_PAPER_STOCK }}
+          KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
+          KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
+          KIWOOM_PAPER_OVERSEAS_APP_KEY: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_KEY }}
+          KIWOOM_PAPER_OVERSEAS_APP_SECRET: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if grep -qs "매매기록 저장 완료\|체결되지 않음" kis_result.txt kiwoom_result.txt; then
+            python -u account_check.py --after-trade
+          else
+            echo "이번 실행은 매매가 없어 대조를 건너뜀"
+          fi
+
       - name: Save Kiwoom token cache
         if: always()
         uses: actions/cache/save@v4

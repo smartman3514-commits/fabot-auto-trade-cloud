@@ -11,6 +11,8 @@
 
     python account_check.py            # 체크 + 텔레그램
     python account_check.py --no-send  # 화면에만
+    python account_check.py --after-trade   # 2026-11-10: 주문 직후 대조(auto-trade 가 매매한 실행 끝에 부른다).
+                                            # 어긋날 때만 🚨 텔레그램 · 실패 코드 1(Actions 빨간불). 맞으면 조용히.
 """
 from __future__ import annotations
 
@@ -176,6 +178,18 @@ def main() -> None:
         info = [*info, *performance.report_lines()]
     except Exception as exc:
         info = [*info, f"성과 계산 실패: {exc}"]
+    after = "--after-trade" in sys.argv
+    if after:   # 주문 직후 대조: 성과 줄은 빼고 짧게. 맞으면 보내지 않는다(평소 매매 알림이 이미 감)
+        info = [x for x in info if not x.startswith("📈")]
+        title = f"[주문 직후 대조 · 한투 v2 + 키움 국내포트 · {now}]"
+        if not problems:
+            print(f"✅ {title} 장부·계좌 일치 — 알림 안 보냄")
+            return
+        text = "\n".join([f"🚨 {title} 방금 매매 뒤 장부와 계좌가 어긋남", *[f"- {p}" for p in problems], *info])
+        print(text)
+        if "--no-send" not in sys.argv:
+            send(text)
+        sys.exit(1)
     title = f"[계좌 체크 · 한투 v2 + 키움 국내포트 · {now}]"
     if problems:
         text = "\n".join([f"🚨 {title}", *[f"- {p}" for p in problems], *info])
