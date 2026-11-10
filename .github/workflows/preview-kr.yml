@@ -32,3 +32,5 @@ jobs:
           python -u fabot_kr.py --market kr
           echo "===== 한투 v2 (국내 칸) ====="
           python -u fabot_v2.py --market kr
+          echo "===== 연말 비중 맞추기 미리보기 (주문 없음) ====="
+          python -u rebalance.py
