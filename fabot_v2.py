@@ -497,6 +497,57 @@ class Order:
     note: str
 
 
+# ── CAPE 막기 중 공포 매수 (V2d + 쉬기 풀기) ──────────────────────────────────
+# 2026-11-14 인선 결정: "V2d+쉬기풀기로 변경해 줘요". CAPE 가 막고 있어도 아래가 모두 맞으면 '파는 칸'(TQQQ / 국내 TQ)을 조금 산다.
+# fa-system day22 시뮬레이션(1998~2026-11-11, FA 엔진·실제 CNN F&G, 공격형): 원래(안 삼) 연 16.96% → V2d+쉬기풀기 17.31%,
+# MDD 같음(−34.26%), 이번 하락 고점 대비 −24.7% → −23.0%. 차이는 작고, 고른 이유는 '비쌀 때도 진짜 하락에선 멈춰 있지 않기'.
+#   1) F&G ≤ 25 (공포) — F&G ≤ 10(투매)이면 두 배
+#   2) 나스닥100(QQQM 일봉)이 최근 3년 고점 대비 7% 넘게 빠져 있음 (V2d: 가짜 공포 거르기)
+#   3) 크기: 그 칸(현금+보유) 의 4% (투매 8%)
+#   4) 산 뒤 5거래일 쉼 — 단, 쉬는 중이어도 지금 값이 마지막으로 산 값보다 10% 넘게 싸면 한 번 더 (쉬기 풀기)
+#   5) 한 하락에서 그 칸의 20% 까지만 — '한 하락' = 나스닥100 이 마지막 고점을 찍은 날 뒤. 그 뒤 산 금액을 모두 센다
+#      (시뮬레이션은 '포트폴리오 새 고점'으로 셌다. 실계좌는 포트 고점 기록이 없어 나스닥100 고점으로 대신 — 공격형은 둘이 거의 같이 움직임.
+#       CAPE 가 풀린 날 평소 곡선으로 산 것도 같이 세지므로 시뮬레이션보다 조금 덜 사는 쪽)
+DIP_FG, DIP_FG_PANIC = 25, 10
+DIP_FRAC, DIP_FRAC_PANIC, DIP_BUDGET = .04, .08, .20
+DIP_NDX_DD, DIP_GAP_DAYS, DIP_RELEASE = .07, 5, .10
+DIP_NDX_DAYS = 756   # 3년(거래일)
+
+
+def dip_plan(p: Position, price: float, fg_now: float, ndx_closes: list[tuple[date, float]] | None, ndx_now: float | None,
+             today: date, money=lambda v: f"${v:,.0f}") -> Order | None:
+    """CAPE 막기 중 공포 매수 한 칸(V2d + 쉬기 풀기). 살 게 없으면 이유를 담은 hold, F&G 가 25 넘으면 None."""
+    k = p.sleeve.key
+    if fg_now > DIP_FG:
+        return None
+    if not ndx_closes or not ndx_now:
+        return Order(k, "hold", 0, None, f"F&G {fg_now:.0f} 공포지만 나스닥100 일봉을 못 읽어 공포 매수 안 함(안전 쪽)")
+    win = [(d, c) for d, c in ndx_closes if d < today][-DIP_NDX_DAYS:] + [(today, ndx_now)]
+    peak_d, peak = max(win, key=lambda x: x[1])
+    dd = ndx_now / peak - 1
+    if dd > -DIP_NDX_DD:
+        return Order(k, "hold", 0, None, f"F&G {fg_now:.0f} 공포지만 나스닥100 고점({peak_d}) 대비 {dd:.1%} — {DIP_NDX_DD:.0%} 넘게 빠져야 삼(CAPE 막기 중)")
+    tot = p.cash + p.qty * price
+    used = sum(q * px for d, q, px in p.buys if d > peak_d)
+    left = DIP_BUDGET * tot - used
+    if left <= 0:
+        return Order(k, "hold", 0, None, f"공포 매수 조건이지만 이번 하락({peak_d} 고점 뒤) 한도 {DIP_BUDGET:.0%}를 다 씀({money(used)})")
+    last = max(p.buys, key=lambda b: b[0]) if p.buys else None
+    if last and cooldown._trading_days_between(last[0], today) < DIP_GAP_DAYS:
+        if price > last[2] * (1 - DIP_RELEASE):
+            return Order(k, "hold", 0, None, f"공포 매수 조건이지만 {last[0]} 매수 뒤 쉬는 중(지금 값이 그때 {money(last[2])}보다 {DIP_RELEASE:.0%} 넘게 싸지 않음)")
+        why_rel = f", 쉬는 중이지만 {last[0]} 산 값 {money(last[2])}보다 {price / last[2] - 1:.0%} → 쉬기 풀기"
+    else:
+        why_rel = ""
+    frac = DIP_FRAC_PANIC if fg_now <= DIP_FG_PANIC else DIP_FRAC
+    amt = min(p.cash, frac * tot, left)
+    if amt < price:
+        return Order(k, "hold", 0, None, f"공포 매수 조건이지만 살 돈({money(amt)})이 1주({money(price)})보다 적음")
+    return Order(k, "buy", amt, None,
+                 f"CAPE 막기 중 공포 매수: F&G {fg_now:.0f}{' 투매' if fg_now <= DIP_FG_PANIC else ''}, 나스닥100 고점 대비 {dd:.1%} → 칸의 {frac:.0%}"
+                 f" (이번 하락 한도 남음 {money(left)}{why_rel})")
+
+
 def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: float, start: date, today: date,
                     name: str = "", money=lambda v: f"${v:,.2f}") -> dict:
     """사다리를 시작일부터 오늘까지 일봉으로 다시 돌려(상태 없음) '지금까지 샀어야 할 금액'을 구하고,
@@ -544,7 +595,8 @@ def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: floa
 
 
 def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
-            prices: dict[str, float], today: date, brk_hist: dict | None = None, start: date | None = None) -> list[Order]:
+            prices: dict[str, float], today: date, brk_hist: dict | None = None, start: date | None = None,
+            ndx_closes: list[tuple[date, float]] | None = None) -> list[Order]:
     orders: list[Order] = []
     # TQQQ 매도 (F&G 72 절반 / 77 전부, 판 뒤 4거래일 쉼)
     tq = pos["TQQQ"]
@@ -575,6 +627,11 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
         amt = min(p.cash, tgt * tot - inv)
         if amt > 0:
             orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {tgt:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH else "") + ")"))
+    # CAPE 막기 중 공포 매수(V2d + 쉬기 풀기, 2026-11-14) — TQQQ 칸만. 오늘 TQQQ 를 팔았으면 안 함
+    if cape["hot"] and not any(o.sleeve == "TQQQ" and o.side in ("buy", "sell") for o in orders):
+        d_ = dip_plan(pos["TQQQ"], prices["TQQQ"], fg_now, ndx_closes, prices.get("QQQ"), today)
+        if d_:
+            orders = [o for o in orders if not (o.sleeve == "TQQQ" and o.side == "hold")] + [d_]
     # 배당 칸 SCHD·버크셔B: 각자 사다리식 (규칙서 10-15판)
     for k, info in LADDER.items():
         lad = brk_ladder_plan(pos[k], brk_hist[k], prices[k], start, today, name=info["name"])
@@ -668,7 +725,12 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     tq_closes = fetch_daily_closes("TQQQ")
     fear = fear_score(info["score"], hist, prices["TQQQ"], tq_closes)
     fear["rsi"] = rsi_wilder(closes_with_today(tq_closes, prices["TQQQ"], today_us))
-    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": cape_block(),
+    try:
+        ndx = fetch_daily_closes("QQQM", "5y")    # 공포 매수의 '나스닥100 고점 대비' (V2d) — 못 읽으면 공포 매수만 안 함
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ! 나스닥100(QQQM) 일봉을 못 읽음 — 공포 매수 안 함: {exc}")
+        ndx = None
+    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": cape_block(), "ndx_closes": ndx,
             "brk_hist": {k: fetch_daily_closes(v["yahoo"], "2y") for k, v in LADDER.items()}, "today_kst": today_kst, "today_us": today_us,
             "gold_rsi": gold_rsi(prices["GOLD"], today_kst) if "GOLD" in prices else None}
 
@@ -1071,7 +1133,7 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         if BROKER != "kis":   # 한투 새 계좌에는 옛 규칙 TQQQ가 없다
             _sell_legacy_tqqq(cfg, ctx["pos"], ctx["fg"], dry_run)
         orders = plan_us(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today_us"],
-                         brk_hist=ctx["brk_hist"], start=date.fromisoformat(cfg["start_date"]))
+                         brk_hist=ctx["brk_hist"], start=date.fromisoformat(cfg["start_date"]), ndx_closes=ctx.get("ndx_closes"))
     else:
         gstart = date.fromisoformat(cfg.get("gold_start") or cfg["start_date"])
         orders = plan_kr(ctx["pos"], ctx["fg"], ctx["today_kst"],

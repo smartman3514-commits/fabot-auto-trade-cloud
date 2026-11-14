@@ -110,13 +110,19 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     tq = V.fetch_daily_closes("TQQQ")          # 국내 마감 때 미국장은 닫혀 있다 → 지난밤 종가 기준
     fear = V.fear_score(info["score"], hist, tq[-1][1], tq)
     fear["rsi"] = V.rsi_wilder([c for _, c in tq])
-    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": V.cape_block(),
+    try:
+        ndx = V.fetch_daily_closes("QQQM", "5y")   # 공포 매수의 '나스닥100 고점 대비' (V2d) — 지난밤 종가 기준
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ! 나스닥100(QQQM) 일봉을 못 읽음 — 공포 매수 안 함: {exc}")
+        ndx = None
+    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": V.cape_block(), "ndx_closes": ndx,
             "div_hist": V.fetch_daily_closes(DIV_YAHOO, "2y"), "today": today, "tqqq_close": tq[-1],
             "gold_rsi": V.gold_rsi(prices["GOLD"], today)}
 
 
 def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: dict[str, float],
-         today: date, div_hist: list, start: date, gold_start: date | None = None, gold_rsi: float | None = None) -> list[Order]:
+         today: date, div_hist: list, start: date, gold_start: date | None = None, gold_rsi: float | None = None,
+         ndx_closes: list | None = None) -> list[Order]:
     """fabot_v2.plan_us + plan_kr를 국내 ETF 칸에 그대로 옮긴 것 + 금 칸(fabot_v2.gold_plan)."""
     orders: list[Order] = []
     if "GOLD" in pos:
@@ -147,6 +153,11 @@ def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: di
         amt = min(p.cash, target * tot - inv)
         if amt > 0:
             orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {target:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if accel else "") + ")"))
+    # CAPE 막기 중 공포 매수(V2d + 쉬기 풀기, 2026-11-14 인선) — '파는 칸'(TQ)만. fabot_v2.dip_plan 그대로(나스닥100 = QQQM 지난밤 종가)
+    if cape["hot"] and not any(o.sleeve == "TQ" and o.side in ("buy", "sell") for o in orders):
+        d_ = V.dip_plan(pos["TQ"], prices["TQ"], fg, ndx_closes, ndx_closes[-1][1] if ndx_closes else None, today, money=won)
+        if d_:
+            orders = [o for o in orders if not (o.sleeve == "TQ" and o.side == "hold")] + [d_]
     lad = V.brk_ladder_plan(pos["DIV"], div_hist, prices["DIV"], start, today, name=DIV_NAME, money=won)
     if lad["order"] > 0:
         orders.append(Order("DIV", "buy", lad["order"], None, lad["note"]))
@@ -279,7 +290,7 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         print("최종 신호: 국내포트 국내장 마감 실행" + (" (dry-run)" if dry_run else ""))
         orders = plan(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today"],
                       ctx["div_hist"], date.fromisoformat(cfg["start_date"]),
-                      gold_start=date.fromisoformat(cfg.get("gold_start") or cfg["start_date"]), gold_rsi=ctx["gold_rsi"])
+                      gold_start=date.fromisoformat(cfg.get("gold_start") or cfg["start_date"]), gold_rsi=ctx["gold_rsi"], ndx_closes=ctx.get("ndx_closes"))
     if not any(o.side in ("buy", "sell") for o in orders):
         _say("오늘 살 것·팔 것 없음")
     for o in orders:
