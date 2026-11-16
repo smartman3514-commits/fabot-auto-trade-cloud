@@ -4,7 +4,7 @@
 v2 규칙을 국내 ETF로 옮긴 이 포트로 굴린다(백테스트 1998~: 연 15.6%, MDD −51.5%, 10년 75구간 손해 0개).
 
 칸(비중)  상품                                             규칙 (숫자는 fabot_v2.py와 같음)
-TQ  15%  TIGER 미국나스닥100레버리지(합성) 418660          FA곡선 + F&G 72 절반·77 전부 매도(매도 사이 4거래일) — v2 TQQQ 자리
+TQ  15%  TIGER 미국나스닥100레버리지(합성) 418660          FA곡선 + F&G 72 절반·77 전부 매도(CAPE 안 막혔으면 칸의 최소 비중까지만, 매도 사이 4거래일) — v2 TQQQ 자리
 QL  15%  같은 418660                                       FA곡선, 안 팖 — v2 QLD 자리(한국엔 3배가 없어 두 칸 모두 2배)
 QQ  30%  KODEX 미국나스닥100 379810                         FA곡선, 안 팖 — v2 QQQM 자리
 DIV 30%  TIGER 미국배당다우존스 458730                      사다리 — v2 SCHD 자리
@@ -127,19 +127,18 @@ def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: di
     orders: list[Order] = []
     if "GOLD" in pos:
         orders.append(V.gold_plan(pos["GOLD"], gold_start or start, today, gold_rsi, prices["GOLD"], money=won))
+    target = fear["target"]
+    accel = fear.get("rsi") is not None and fear["rsi"] <= V.RSI_ACCEL_TH
+    if accel:
+        target = min(1.0, target + V.RSI_ACCEL_ADD)
     tq = pos["TQ"]
     if fg >= V.SELL_HALF and tq.qty > 0:
         last_sell = max((d for d, _, _ in tq.sells), default=None)
         if last_sell and cooldown._trading_days_between(last_sell, today) < V.SELL_GAP_DAYS:
             orders.append(Order("TQ", "hold", 0, None, f"F&G {fg:.0f} 매도 조건이지만 {last_sell} 매도 뒤 쉬는 중"))
-        else:
-            q = tq.qty if fg >= V.SELL_ALL else math.floor(tq.qty / 2)
-            if q > 0:
-                orders.append(Order("TQ", "sell", 0, q, f"F&G {fg:.0f} ≥ {V.SELL_ALL if fg >= V.SELL_ALL else V.SELL_HALF} → {'전부' if fg >= V.SELL_ALL else '절반'} 매도"))
-    target = fear["target"]
-    accel = fear.get("rsi") is not None and fear["rsi"] <= V.RSI_ACCEL_TH
-    if accel:
-        target = min(1.0, target + V.RSI_ACCEL_ADD)
+        else:   # 2026-11-16 인선: CAPE 안 막혔으면 칸의 최소 비중(곡선 목표)까지만 줄임 — fabot_v2.greed_sell
+            q, why = V.greed_sell(tq, prices["TQ"], fg, target, cape["hot"])
+            orders.append(Order("TQ", "sell" if q > 0 else "hold", 0, q if q > 0 else None, why))
     for k in ("TQ", "QL", "QQ"):
         p = pos[k]; px = prices[k]; inv = p.qty * px; tot = p.cash + inv
         if tot <= 0 or any(o.sleeve == k and o.side == "sell" for o in orders):

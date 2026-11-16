@@ -514,6 +514,32 @@ DIP_NDX_DD, DIP_GAP_DAYS, DIP_RELEASE = .07, 5, .10
 DIP_NDX_DAYS = 756   # 3년(거래일)
 
 
+def greed_sell(p: Position, price: float, fg_now: float, target: float, cape_hot: bool) -> tuple[int, str]:
+    """탐욕 매도 수량(2026-11-16 인선): F&G 72 이상 보유의 절반, 77 이상 전부 — 단, CAPE 가 안 막혀 있으면
+    칸의 최소 비중(오늘 FA곡선 목표, 보통 20%)만 남기고 줄인다. 최소 비중 밑으로는 줄이지 않는다.
+
+    엔진(fa-journey strategy.sim_core)은 '팔고 같은 날 곡선이 목표까지 다시 채움'으로 도는데 결과가 이것과 같다.
+    예전 자동매매는 판 날 곡선을 건너뛰어서 '전부 팔고 다음 거래일에 20% 다시 사기'가 실제 주문으로 나갔다 —
+    수수료가 두 번 들고 하루 늦게 사서 조금 손해(25일차 R1 −0.08%p). 그래서 처음부터 한 번에 '목표까지 줄이기'로 낸다.
+    CAPE 막힘(곡선 멈춤) 중엔 바닥이 없어 원래대로 절반·전부.
+    돌려주는 것: (팔 수량, 설명). 수량 0 = 팔지 않음(이미 최소 비중보다 적음 — 곡선이 판단)."""
+    full = fg_now >= SELL_ALL
+    th = SELL_ALL if full else SELL_HALF
+    qty = int(p.qty)
+    q = qty if full else math.floor(qty / 2)
+    what = "전부" if full else "절반"
+    if cape_hot or price <= 0:
+        return q, f"F&G {fg_now:.0f} ≥ {th} → {what} 매도" + (" (CAPE 막힘이라 최소 비중 없음)" if cape_hot and full else "")
+    tot = p.cash + qty * price
+    if tot <= 0 or (qty - q) * price / tot >= target - CURVE_GAP:
+        return q, f"F&G {fg_now:.0f} ≥ {th} → {what} 매도"
+    keep = math.floor(target * tot / price)
+    q2 = max(0, qty - keep)
+    if q2 <= 0:
+        return 0, f"F&G {fg_now:.0f} 매도 조건이지만 이미 칸의 최소 비중({target:.0%})보다 적어서 안 팖"
+    return q2, f"F&G {fg_now:.0f} ≥ {th} → 칸의 최소 비중 {target:.0%}만 남기고 줄임({keep}주 남김)"
+
+
 def dip_plan(p: Position, price: float, fg_now: float, ndx_closes: list[tuple[date, float]] | None, ndx_now: float | None,
              today: date, money=lambda v: f"${v:,.0f}") -> Order | None:
     """CAPE 막기 중 공포 매수 한 칸(V2d + 쉬기 풀기). 살 게 없으면 이유를 담은 hold, F&G 가 25 넘으면 None."""
@@ -598,21 +624,21 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
             prices: dict[str, float], today: date, brk_hist: dict | None = None, start: date | None = None,
             ndx_closes: list[tuple[date, float]] | None = None) -> list[Order]:
     orders: list[Order] = []
-    # TQQQ 매도 (F&G 72 절반 / 77 전부, 판 뒤 4거래일 쉼)
+    # FA곡선 목표 + RSI 가속 (탐욕 매도의 '최소 비중'에도 씀)
+    target = fear["target"]
+    if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH:
+        target = min(1.0, target + RSI_ACCEL_ADD)
+    fear = {**fear, "target": target}
+    # TQQQ 매도 (F&G 72 절반 / 77 전부 — CAPE 안 막혔으면 칸의 최소 비중까지만, 판 뒤 4거래일 쉼)
     tq = pos["TQQQ"]
     if fg_now >= SELL_HALF and tq.qty > 0:
         last_sell = max((d for d, _, _ in tq.sells), default=None)
         if last_sell and cooldown._trading_days_between(last_sell, today) < SELL_GAP_DAYS:
             orders.append(Order("TQQQ", "hold", 0, None, f"F&G {fg_now:.0f} 매도 조건이지만 {last_sell} 매도 뒤 쉬는 중"))
         else:
-            q = tq.qty if fg_now >= SELL_ALL else math.floor(tq.qty / 2)
-            if q > 0:
-                orders.append(Order("TQQQ", "sell", 0, q, f"F&G {fg_now:.0f} ≥ {SELL_ALL if fg_now >= SELL_ALL else SELL_HALF} → {'전부' if fg_now >= SELL_ALL else '절반'} 매도"))
-    # FA곡선 (TQQQ·QLD·QQQ) + RSI 가속
-    target = fear["target"]
-    if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH:
-        target = min(1.0, target + RSI_ACCEL_ADD)
-    fear = {**fear, "target": target}
+            q, why = greed_sell(tq, prices["TQQQ"], fg_now, target, cape["hot"])
+            orders.append(Order("TQQQ", "sell" if q > 0 else "hold", 0, q if q > 0 else None, why))
+    # FA곡선 (TQQQ·QLD·QQQ)
     for k in ("TQQQ", "QLD", "QQQ"):
         p = pos[k]; px = prices[k]; inv = p.qty * px; tot = p.cash + inv
         if tot <= 0 or any(o.sleeve == k and o.side == "sell" for o in orders):
