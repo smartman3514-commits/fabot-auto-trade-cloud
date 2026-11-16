@@ -91,6 +91,9 @@ S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
 CAPE_K = 1.6            # 2026-10-26 인선: 1.7 → 1.6 (v2 엔진 1998~ MDD −46.2% → −40.6%, 연수익 15.3% → 15.0%)
 SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 72, 77, 4
+# 2026-11-16 인선 결정 A+B: A 하락장(TQQQ 1년 최고가 −30% 넘게 아래)이면 탐욕 매도 쉼,
+# B 탐욕으로 판 뒤엔 그 판 값보다 낮아지기 전까지(최대 252거래일) TQQQ 칸을 최소 비중(CURVE_BASE)까지만 채움
+AB_BEAR_DD, AB_REFILL_DAYS = .30, 252
 DCA_WEEKS = 26          # (옛 규칙 — 10-15부터 버크셔는 사다리식)
 RSI_LEN, RSI_ACCEL_TH, RSI_ACCEL_ADD = 14, 30, .40      # FA곡선 RSI 가속 (TQQQ 일봉)
 LAD_RSI, LAD_UNIT, LAD_GAP, LAD_DEADLINE = 40, .10, 21, 252
@@ -152,7 +155,7 @@ def fetch_v2_trades() -> list[dict]:
     env = cooldown._load_journal_env()
     r = requests.get(
         f"{env['SUPABASE_URL']}/rest/v1/trades",
-        params={"select": "trade_date,ticker,action,quantity,price,fg_score,created_at",
+        params={"select": "trade_date,ticker,action,quantity,price,fg_score,memo,created_at",
                 "account": f"eq.{V2_ACCOUNT}", "order": "created_at.asc"},
         headers={"apikey": env["SUPABASE_SERVICE_KEY"], "Authorization": f"Bearer {env['SUPABASE_SERVICE_KEY']}"},
         timeout=15,
@@ -170,6 +173,7 @@ class Position:
     cash: float = 0.0
     buys: list = field(default_factory=list)    # [(date, qty, price)]
     sells: list = field(default_factory=list)
+    greed_sells: list = field(default_factory=list)   # [(date, price)] 탐욕 매도만(A+B 의 B 용, 2026-11-16)
 
     @property
     def avg(self) -> float:
@@ -194,6 +198,8 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
         else:
             fr = min(1.0, q / p.qty) if p.qty > 0 else 0.0
             p.cost -= p.cost * fr; p.qty -= q; p.cash += q * px; p.sells.append((d, q, px))
+            if is_greed_sell(t):
+                p.greed_sells.append((d, px))
     absorb_into_gold(pos, "KRW", cfg.get("absorb_into_gold"))
     import rebalance
     rebalance.apply_moves(pos, "v2")          # 연말 비중 맞추기(인선 승인)로 칸 사이에 옮긴 현금
@@ -317,7 +323,8 @@ def fear_score(fg_now: float, fg_history: list[tuple[date, float]], tqqq_now: fl
     f_dd = min(1., max(0., dd / S_DD_FULL))
     f_run = min(1., run / S_RUN_FULL)
     S = S_FG_W * f_fg + S_DD_W * f_dd + S_RUN_W * f_run
-    return {"S": S, "target": CURVE_BASE + (1 - CURVE_BASE) * S ** CURVE_POW, "dd": dd, "hi2": hi2,
+    hi1 = max([c for _, c in tqqq_closes[-252:]] + [tqqq_now])     # A+B 의 A: TQQQ 1년(252거래일) 최고가
+    return {"S": S, "target": CURVE_BASE + (1 - CURVE_BASE) * S ** CURVE_POW, "dd": dd, "hi2": hi2, "hi1": hi1, "tq_now": tqqq_now,
             "run": run, "f_fg": f_fg, "f_dd": f_dd, "f_run": f_run}
 
 
@@ -514,6 +521,37 @@ DIP_NDX_DD, DIP_GAP_DAYS, DIP_RELEASE = .07, 5, .10
 DIP_NDX_DAYS = 756   # 3년(거래일)
 
 
+def is_greed_sell(t: dict) -> bool:
+    """매매기록 한 줄이 탐욕 매도인가 — 메모의 'F&G 78 ≥ 77 …' / 'F&G 73 ≥ 72 …'(연말 비중 맞추기·시작일 정리는 아님)."""
+    m = t.get("memo") or ""
+    return t.get("action") == "sell" and "F&G" in m and (f"≥ {SELL_HALF}" in m or f"≥ {SELL_ALL}" in m)
+
+
+def bear_skip(fear: dict) -> str | None:
+    """A(2026-11-16 인선): TQQQ 가 1년 최고가보다 30% 넘게 아래면 탐욕이어도 팔지 않는다 — 큰 하락 뒤 첫 반등에서 팔지 않기.
+    돌려주는 것: 쉴 때 설명, 아니면 None. 1년 최고가를 모르면 None(원래대로 판다)."""
+    hi1, now = fear.get("hi1"), fear.get("tq_now")
+    if not hi1 or not now or now / hi1 - 1 > -AB_BEAR_DD:
+        return None
+    return f"TQQQ 가 1년 최고가({hi1:,.2f})보다 {1 - now / hi1:.0%} 아래(하락장) — 탐욕이어도 안 팖(A+B 의 A)"
+
+
+def refill_cap(p: Position, price: float, closes: list[tuple[date, float]] | None, today: date) -> str | None:
+    """B(2026-11-16 인선): 마지막 탐욕 매도 뒤, 값이 그 판 값보다 낮아진 적이 없고 252거래일이 안 지났으면
+    곡선이 TQQQ 칸을 최소 비중(CURVE_BASE)까지만 채운다. 돌려주는 것: 막을 때 설명, 아니면 None.
+    closes = 그 칸 상품의 일봉(판 뒤 하루라도 판 값보다 낮게 마감했으면 풀림). 판 날 당일은 안 풀림(엔진과 같음)."""
+    if not p.greed_sells:
+        return None
+    d, px = max(p.greed_sells)
+    if cooldown._trading_days_between(d, today) >= AB_REFILL_DAYS:
+        return None
+    if today > d and price < px:
+        return None
+    if closes and any(c < px for dd, c in closes if d < dd <= today):
+        return None
+    return f"{d} 탐욕 매도 값({px:,.2f}) 아래로 내려오기 전까지 최소 비중 {CURVE_BASE:.0%}까지만 채움(A+B 의 B)"
+
+
 def greed_sell(p: Position, price: float, fg_now: float, target: float, cape_hot: bool) -> tuple[int, str]:
     """탐욕 매도 수량(2026-11-16 인선): F&G 72 이상 보유의 절반, 77 이상 전부 — 단, CAPE 가 안 막혀 있으면
     칸의 최소 비중(오늘 FA곡선 목표, 보통 20%)만 남기고 줄인다. 최소 비중 밑으로는 줄이지 않는다.
@@ -622,7 +660,7 @@ def brk_ladder_plan(b: Position, hist: list[tuple[date, float]], price_now: floa
 
 def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
             prices: dict[str, float], today: date, brk_hist: dict | None = None, start: date | None = None,
-            ndx_closes: list[tuple[date, float]] | None = None) -> list[Order]:
+            ndx_closes: list[tuple[date, float]] | None = None, tq_closes: list[tuple[date, float]] | None = None) -> list[Order]:
     orders: list[Order] = []
     # FA곡선 목표 + RSI 가속 (탐욕 매도의 '최소 비중'에도 씀)
     target = fear["target"]
@@ -630,13 +668,18 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
         target = min(1.0, target + RSI_ACCEL_ADD)
     fear = {**fear, "target": target}
     # TQQQ 매도 (F&G 72 절반 / 77 전부 — CAPE 안 막혔으면 칸의 최소 비중까지만, 판 뒤 4거래일 쉼)
+    # + A+B(2026-11-16 인선): A 하락장이면 안 팖 · B 판 날은 최소 비중(CURVE_BASE)까지 줄임(곡선 목표가 더 높아도)
     tq = pos["TQQQ"]
+    cap_b = refill_cap(tq, prices["TQQQ"], tq_closes, today)
     if fg_now >= SELL_HALF and tq.qty > 0:
         last_sell = max((d for d, _, _ in tq.sells), default=None)
+        bear = bear_skip(fear)
         if last_sell and cooldown._trading_days_between(last_sell, today) < SELL_GAP_DAYS:
             orders.append(Order("TQQQ", "hold", 0, None, f"F&G {fg_now:.0f} 매도 조건이지만 {last_sell} 매도 뒤 쉬는 중"))
+        elif bear:
+            orders.append(Order("TQQQ", "hold", 0, None, f"F&G {fg_now:.0f} ≥ {SELL_HALF} 이지만 {bear}"))
         else:
-            q, why = greed_sell(tq, prices["TQQQ"], fg_now, target, cape["hot"])
+            q, why = greed_sell(tq, prices["TQQQ"], fg_now, CURVE_BASE, cape["hot"])
             orders.append(Order("TQQQ", "sell" if q > 0 else "hold", 0, q if q > 0 else None, why))
     # FA곡선 (TQQQ·QLD·QQQ)
     for k in ("TQQQ", "QLD", "QQQ"):
@@ -647,6 +690,11 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
         share = inv / tot
         if share >= tgt - CURVE_GAP:
             continue
+        if k == "TQQQ" and cap_b and tgt > CURVE_BASE:
+            if share >= CURVE_BASE - CURVE_GAP:
+                orders.append(Order(k, "hold", 0, None, f"투자 비중 {share:.0%} < 목표 {tgt:.0%}이지만 {cap_b}"))
+                continue
+            tgt = CURVE_BASE
         if cape["hot"]:
             orders.append(Order(k, "hold", 0, None, f"투자 비중 {share:.0%} < 목표 {tgt:.0%}이지만 CAPE 막기(CAPE {cape['cape']} > 기준선 {cape['line'] and round(cape['line'], 1)})"))
             continue
@@ -756,7 +804,7 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     except Exception as exc:  # noqa: BLE001
         print(f"   ! 나스닥100(QQQM) 일봉을 못 읽음 — 공포 매수 안 함: {exc}")
         ndx = None
-    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": cape_block(), "ndx_closes": ndx,
+    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": cape_block(), "ndx_closes": ndx, "tq_closes": tq_closes,
             "brk_hist": {k: fetch_daily_closes(v["yahoo"], "2y") for k, v in LADDER.items()}, "today_kst": today_kst, "today_us": today_us,
             "gold_rsi": gold_rsi(prices["GOLD"], today_kst) if "GOLD" in prices else None}
 
@@ -1158,7 +1206,7 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
     elif market == "us":
         if BROKER != "kis":   # 한투 새 계좌에는 옛 규칙 TQQQ가 없다
             _sell_legacy_tqqq(cfg, ctx["pos"], ctx["fg"], dry_run)
-        orders = plan_us(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today_us"],
+        orders = plan_us(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today_us"], tq_closes=ctx.get("tq_closes"),
                          brk_hist=ctx["brk_hist"], start=date.fromisoformat(cfg["start_date"]), ndx_closes=ctx.get("ndx_closes"))
     else:
         gstart = date.fromisoformat(cfg.get("gold_start") or cfg["start_date"])

@@ -66,7 +66,7 @@ def fetch_trades() -> list[dict]:
     env = cooldown._load_journal_env()
     r = requests.get(
         f"{env['SUPABASE_URL']}/rest/v1/trades",
-        params={"select": "trade_date,ticker,action,quantity,price,fg_score,created_at",
+        params={"select": "trade_date,ticker,action,quantity,price,fg_score,memo,created_at",
                 "account": f"eq.{ACCOUNT}", "order": "created_at.asc"},
         headers={"apikey": env["SUPABASE_SERVICE_KEY"], "Authorization": f"Bearer {env['SUPABASE_SERVICE_KEY']}"},
         timeout=15,
@@ -89,6 +89,8 @@ def build_ledger(cfg: dict, trades: list[dict]) -> dict[str, Position]:
         else:
             fr = min(1.0, q / p.qty) if p.qty > 0 else 0.0
             p.cost -= p.cost * fr; p.qty -= q; p.cash += q * px; p.sells.append((d, q, px))
+            if V.is_greed_sell(t):
+                p.greed_sells.append((d, px))
     V.absorb_into_gold(pos, "KRW", cfg.get("absorb_into_gold"))
     import rebalance
     rebalance.apply_moves(pos, "kr")          # 연말 비중 맞추기(인선 승인)로 칸 사이에 옮긴 현금
@@ -115,14 +117,19 @@ def gather(cfg: dict, trades: list[dict]) -> dict:
     except Exception as exc:  # noqa: BLE001
         print(f"   ! 나스닥100(QQQM) 일봉을 못 읽음 — 공포 매수 안 함: {exc}")
         ndx = None
-    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": V.cape_block(), "ndx_closes": ndx,
+    try:
+        tq_kr = V.fetch_daily_closes("418660.KS", "2y")   # A+B 의 B: 판 뒤 418660 이 판 값보다 낮게 마감했는지 — 못 읽으면 오늘 값만 봄
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ! 418660 일봉을 못 읽음 — B 는 오늘 값만 봄: {exc}")
+        tq_kr = None
+    return {"pos": pos, "prices": prices, "fg": info["score"], "fear": fear, "cape": V.cape_block(), "ndx_closes": ndx, "tq_kr": tq_kr,
             "div_hist": V.fetch_daily_closes(DIV_YAHOO, "2y"), "today": today, "tqqq_close": tq[-1],
             "gold_rsi": V.gold_rsi(prices["GOLD"], today)}
 
 
 def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: dict[str, float],
          today: date, div_hist: list, start: date, gold_start: date | None = None, gold_rsi: float | None = None,
-         ndx_closes: list | None = None) -> list[Order]:
+         ndx_closes: list | None = None, tq_closes: list | None = None) -> list[Order]:
     """fabot_v2.plan_us + plan_kr를 국내 ETF 칸에 그대로 옮긴 것 + 금 칸(fabot_v2.gold_plan)."""
     orders: list[Order] = []
     if "GOLD" in pos:
@@ -132,12 +139,16 @@ def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: di
     if accel:
         target = min(1.0, target + V.RSI_ACCEL_ADD)
     tq = pos["TQ"]
+    cap_b = V.refill_cap(tq, prices["TQ"], tq_closes, today)      # A+B 의 B(418660 자기 값 기준)
     if fg >= V.SELL_HALF and tq.qty > 0:
         last_sell = max((d for d, _, _ in tq.sells), default=None)
+        bear = V.bear_skip(fear)                                   # A+B 의 A(TQQQ 1년 최고가 기준 — 곡선과 같은 TQQQ 일봉)
         if last_sell and cooldown._trading_days_between(last_sell, today) < V.SELL_GAP_DAYS:
             orders.append(Order("TQ", "hold", 0, None, f"F&G {fg:.0f} 매도 조건이지만 {last_sell} 매도 뒤 쉬는 중"))
-        else:   # 2026-11-16 인선: CAPE 안 막혔으면 칸의 최소 비중(곡선 목표)까지만 줄임 — fabot_v2.greed_sell
-            q, why = V.greed_sell(tq, prices["TQ"], fg, target, cape["hot"])
+        elif bear:
+            orders.append(Order("TQ", "hold", 0, None, f"F&G {fg:.0f} ≥ {V.SELL_HALF} 이지만 {bear}"))
+        else:   # 2026-11-16 인선: CAPE 안 막혔으면 칸의 최소 비중까지만 줄임(A+B: 판 날은 CURVE_BASE) — fabot_v2.greed_sell
+            q, why = V.greed_sell(tq, prices["TQ"], fg, V.CURVE_BASE, cape["hot"])
             orders.append(Order("TQ", "sell" if q > 0 else "hold", 0, q if q > 0 else None, why))
     for k in ("TQ", "QL", "QQ"):
         p = pos[k]; px = prices[k]; inv = p.qty * px; tot = p.cash + inv
@@ -146,12 +157,18 @@ def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: di
         share = inv / tot
         if share >= target - V.CURVE_GAP:
             continue
+        tgt_k = target
+        if k == "TQ" and cap_b and target > V.CURVE_BASE:
+            if share >= V.CURVE_BASE - V.CURVE_GAP:
+                orders.append(Order(k, "hold", 0, None, f"투자 비중 {share:.0%} < 목표 {target:.0%}이지만 {cap_b}"))
+                continue
+            tgt_k = V.CURVE_BASE
         if cape["hot"]:
             orders.append(Order(k, "hold", 0, None, f"투자 비중 {share:.0%} < 목표 {target:.0%}이지만 CAPE 막기(CAPE {cape['cape']} > 기준선 {cape['line'] and round(cape['line'], 1)})"))
             continue
-        amt = min(p.cash, target * tot - inv)
+        amt = min(p.cash, tgt_k * tot - inv)
         if amt > 0:
-            orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {target:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if accel else "") + ")"))
+            orders.append(Order(k, "buy", amt, None, f"투자 비중 {share:.0%} → 목표 {tgt_k:.0%} (S {fear['S']:.2f}" + (f", RSI {fear['rsi']:.0f} 가속" if accel else "") + ")"))
     # CAPE 막기 중 공포 매수(V2d + 쉬기 풀기, 2026-11-14 인선) — '파는 칸'(TQ)만. fabot_v2.dip_plan 그대로(나스닥100 = QQQM 지난밤 종가)
     if cape["hot"] and not any(o.sleeve == "TQ" and o.side in ("buy", "sell") for o in orders):
         d_ = V.dip_plan(pos["TQ"], prices["TQ"], fg, ndx_closes, ndx_closes[-1][1] if ndx_closes else None, today, money=won)
@@ -289,7 +306,8 @@ def run_live(dry_run: bool = False, force_market: str | None = None) -> None:
         print("최종 신호: 국내포트 국내장 마감 실행" + (" (dry-run)" if dry_run else ""))
         orders = plan(ctx["pos"], ctx["fg"], ctx["fear"], ctx["cape"], ctx["prices"], ctx["today"],
                       ctx["div_hist"], date.fromisoformat(cfg["start_date"]),
-                      gold_start=date.fromisoformat(cfg.get("gold_start") or cfg["start_date"]), gold_rsi=ctx["gold_rsi"], ndx_closes=ctx.get("ndx_closes"))
+                      gold_start=date.fromisoformat(cfg.get("gold_start") or cfg["start_date"]), gold_rsi=ctx["gold_rsi"], ndx_closes=ctx.get("ndx_closes"),
+                      tq_closes=ctx.get("tq_kr"))
     if not any(o.side in ("buy", "sell") for o in orders):
         _say("오늘 살 것·팔 것 없음")
     for o in orders:
