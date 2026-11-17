@@ -1,4 +1,4 @@
-"""탐욕 매도 71/78 · 판 뒤 42거래일 쉬기 (2026-11-17 인선 결정). 엔진 fa-journey PR #20 과 같게."""
+"""탐욕 매도 71/78 · 판 뒤 40거래일 쉬기 (2026-11-17 인선 결정). 엔진 fa-journey PR #21 과 같게."""
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -9,7 +9,7 @@ from test_ab_rule import TODAY, _pos, _us  # noqa: E402
 
 
 def test_numbers():
-    assert (v2.SELL_HALF, v2.SELL_ALL, v2.SELL_GAP_DAYS) == (71, 78, 42)
+    assert (v2.SELL_HALF, v2.SELL_ALL, v2.SELL_GAP_DAYS) == (71, 78, 40)
 
 
 def test_new_and_old_memos_are_greed_sells():
@@ -28,14 +28,14 @@ def test_77_is_still_half_78_is_all_in_cape_hot():
     assert _us(_pos(qty=600), 78, {"target": .2, "hi1": 120.0, "tq_now": 100.0}, hot=True)[0].qty == 600
 
 
-def test_rest_42_trading_days_after_greed_sell():
+def test_rest_40_trading_days_after_greed_sell():
     sold = TODAY - timedelta(days=40)       # 약 28거래일 전
     pos = _pos(qty=300, greed=[(sold, 100.0)])
     o = _us(pos, 80, {"target": .2, "hi1": 120.0, "tq_now": 100.0}, hot=True)
-    assert o[0].side == "hold" and "42거래일 쉬는 중" in o[0].note
+    assert o[0].side == "hold" and "40거래일 쉬는 중" in o[0].note
 
 
-def test_rest_over_after_42_trading_days():
+def test_rest_over_after_40_trading_days():
     sold = TODAY - timedelta(days=70)       # 약 50거래일 전
     pos = _pos(qty=300, greed=[(sold, 100.0)])
     o = _us(pos, 80, {"target": .2, "hi1": 120.0, "tq_now": 100.0}, hot=True)

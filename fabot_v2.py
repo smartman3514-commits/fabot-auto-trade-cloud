@@ -90,9 +90,9 @@ CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 2.0, .05      # 목표 = 20% + 80%·S²,
 S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
 CAPE_K = 1.6            # 2026-10-26 인선: 1.7 → 1.6 (v2 엔진 1998~ MDD −46.2% → −40.6%, 연수익 15.3% → 15.0%)
-# 2026-11-17 인선: 절반 팔기 72 → 71, 최소 비중까지 77 → 78, 탐욕 매도 뒤 쉬는 거래일 4 → 42(약 2달)
+# 2026-11-17 인선: 절반 팔기 72 → 71, 최소 비중까지 77 → 78, 탐욕 매도 뒤 쉬는 거래일 4 → 42 → 40(약 2달)
 # — '빨리 절반을 처리하고 나머지는 가져간다'. 엔진(fa-journey SELL_HALF_FG/SELL_ALL_FG/SELL_GAP_DAYS)과 같게. 판정 ①~④ 통과
-SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 71, 78, 42
+SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 71, 78, 40
 _OLD_SELL_TH = (72, 77)   # 11-17 전 탐욕 매도 메모('F&G 73 ≥ 72 …')도 탐욕 매도로 알아보기
 # 2026-11-16 인선 결정 A+B: A 하락장(TQQQ 1년 최고가 −30% 넘게 아래)이면 탐욕 매도 쉼,
 # B 탐욕으로 판 뒤엔 그 판 값보다 낮아지기 전까지(최대 252거래일) TQQQ 칸을 최소 비중(CURVE_BASE)까지만 채움
@@ -672,7 +672,7 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
     if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH:
         target = min(1.0, target + RSI_ACCEL_ADD)
     fear = {**fear, "target": target}
-    # TQQQ 매도 (F&G 71 절반 / 78 전부 — CAPE 안 막혔으면 칸의 최소 비중까지만, 탐욕 매도 뒤 42거래일 쉼)
+    # TQQQ 매도 (F&G 71 절반 / 78 전부 — CAPE 안 막혔으면 칸의 최소 비중까지만, 탐욕 매도 뒤 40거래일 쉼)
     # 쉬는 날은 '탐욕 매도'부터 센다(엔진과 같음 — 연말 비중 맞추기로 판 날은 세지 않음)
     # + A+B(2026-11-16 인선): A 하락장이면 안 팖 · B 판 날은 최소 비중(CURVE_BASE)까지 줄임(곡선 목표가 더 높아도)
     tq = pos["TQQQ"]
