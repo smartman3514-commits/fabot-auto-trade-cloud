@@ -90,7 +90,10 @@ CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 2.0, .05      # 목표 = 20% + 80%·S²,
 S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
 CAPE_K = 1.6            # 2026-10-26 인선: 1.7 → 1.6 (v2 엔진 1998~ MDD −46.2% → −40.6%, 연수익 15.3% → 15.0%)
-SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 72, 77, 4
+# 2026-11-17 인선: 절반 팔기 72 → 71, 최소 비중까지 77 → 78, 탐욕 매도 뒤 쉬는 거래일 4 → 42(약 2달)
+# — '빨리 절반을 처리하고 나머지는 가져간다'. 엔진(fa-journey SELL_HALF_FG/SELL_ALL_FG/SELL_GAP_DAYS)과 같게. 판정 ①~④ 통과
+SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 71, 78, 42
+_OLD_SELL_TH = (72, 77)   # 11-17 전 탐욕 매도 메모('F&G 73 ≥ 72 …')도 탐욕 매도로 알아보기
 # 2026-11-16 인선 결정 A+B: A 하락장(TQQQ 1년 최고가 −30% 넘게 아래)이면 탐욕 매도 쉼,
 # B 탐욕으로 판 뒤엔 그 판 값보다 낮아지기 전까지(최대 252거래일) TQQQ 칸을 최소 비중(CURVE_BASE)까지만 채움
 AB_BEAR_DD, AB_REFILL_DAYS = .30, 252
@@ -526,7 +529,7 @@ DIP_NDX_DAYS = 756   # 3년(거래일)
 def is_greed_sell(t: dict) -> bool:
     """매매기록 한 줄이 탐욕 매도인가 — 메모의 'F&G 78 ≥ 77 …' / 'F&G 73 ≥ 72 …'(연말 비중 맞추기·시작일 정리는 아님)."""
     m = t.get("memo") or ""
-    return t.get("action") == "sell" and "F&G" in m and (f"≥ {SELL_HALF}" in m or f"≥ {SELL_ALL}" in m)
+    return t.get("action") == "sell" and "F&G" in m and any(f"≥ {x}" in m for x in (SELL_HALF, SELL_ALL, *_OLD_SELL_TH))
 
 
 def bear_skip(fear: dict) -> str | None:
@@ -555,7 +558,7 @@ def refill_cap(p: Position, price: float, closes: list[tuple[date, float]] | Non
 
 
 def greed_sell(p: Position, price: float, fg_now: float, target: float, cape_hot: bool) -> tuple[int, str]:
-    """탐욕 매도 수량(2026-11-16 인선): F&G 72 이상 보유의 절반, 77 이상 전부 — 단, CAPE 가 안 막혀 있으면
+    """탐욕 매도 수량(2026-11-16 인선, 11-17 71/78): F&G 71 이상 보유의 절반, 78 이상 전부 — 단, CAPE 가 안 막혀 있으면
     칸의 최소 비중(오늘 FA곡선 목표, 보통 20%)만 남기고 줄인다. 최소 비중 밑으로는 줄이지 않는다.
 
     엔진(fa-journey strategy.sim_core)은 '팔고 같은 날 곡선이 목표까지 다시 채움'으로 도는데 결과가 이것과 같다.
@@ -669,15 +672,16 @@ def plan_us(pos: dict[str, Position], fg_now: float, fear: dict, cape: dict,
     if fear.get("rsi") is not None and fear["rsi"] <= RSI_ACCEL_TH:
         target = min(1.0, target + RSI_ACCEL_ADD)
     fear = {**fear, "target": target}
-    # TQQQ 매도 (F&G 72 절반 / 77 전부 — CAPE 안 막혔으면 칸의 최소 비중까지만, 판 뒤 4거래일 쉼)
+    # TQQQ 매도 (F&G 71 절반 / 78 전부 — CAPE 안 막혔으면 칸의 최소 비중까지만, 탐욕 매도 뒤 42거래일 쉼)
+    # 쉬는 날은 '탐욕 매도'부터 센다(엔진과 같음 — 연말 비중 맞추기로 판 날은 세지 않음)
     # + A+B(2026-11-16 인선): A 하락장이면 안 팖 · B 판 날은 최소 비중(CURVE_BASE)까지 줄임(곡선 목표가 더 높아도)
     tq = pos["TQQQ"]
     cap_b = refill_cap(tq, prices["TQQQ"], tq_closes, today)
     if fg_now >= SELL_HALF and tq.qty > 0:
-        last_sell = max((d for d, _, _ in tq.sells), default=None)
+        last_sell = max((d for d, _ in tq.greed_sells), default=None)
         bear = bear_skip(fear)
         if last_sell and cooldown._trading_days_between(last_sell, today) < SELL_GAP_DAYS:
-            orders.append(Order("TQQQ", "hold", 0, None, f"F&G {fg_now:.0f} 매도 조건이지만 {last_sell} 매도 뒤 쉬는 중"))
+            orders.append(Order("TQQQ", "hold", 0, None, f"F&G {fg_now:.0f} 매도 조건이지만 {last_sell} 탐욕 매도 뒤 {SELL_GAP_DAYS}거래일 쉬는 중"))
         elif bear:
             orders.append(Order("TQQQ", "hold", 0, None, f"F&G {fg_now:.0f} ≥ {SELL_HALF} 이지만 {bear}"))
         else:

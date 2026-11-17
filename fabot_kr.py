@@ -141,10 +141,10 @@ def plan(pos: dict[str, Position], fg: float, fear: dict, cape: dict, prices: di
     tq = pos["TQ"]
     cap_b = V.refill_cap(tq, prices["TQ"], tq_closes, today)      # A+B 의 B(418660 자기 값 기준)
     if fg >= V.SELL_HALF and tq.qty > 0:
-        last_sell = max((d for d, _, _ in tq.sells), default=None)
+        last_sell = max((d for d, _ in tq.greed_sells), default=None)   # 11-17: 탐욕 매도부터 셈(엔진과 같음)
         bear = V.bear_skip(fear)                                   # A+B 의 A(TQQQ 1년 최고가 기준 — 곡선과 같은 TQQQ 일봉)
         if last_sell and cooldown._trading_days_between(last_sell, today) < V.SELL_GAP_DAYS:
-            orders.append(Order("TQ", "hold", 0, None, f"F&G {fg:.0f} 매도 조건이지만 {last_sell} 매도 뒤 쉬는 중"))
+            orders.append(Order("TQ", "hold", 0, None, f"F&G {fg:.0f} 매도 조건이지만 {last_sell} 탐욕 매도 뒤 {V.SELL_GAP_DAYS}거래일 쉬는 중"))
         elif bear:
             orders.append(Order("TQ", "hold", 0, None, f"F&G {fg:.0f} ≥ {V.SELL_HALF} 이지만 {bear}"))
         else:   # 2026-11-16 인선: CAPE 안 막혔으면 칸의 최소 비중까지만 줄임(A+B: 판 날은 CURVE_BASE) — fabot_v2.greed_sell
