@@ -80,10 +80,18 @@ def test_b_released_after_close_below_sale_price():
     assert o and o[0].side == "buy"                                              # 11-03 에 98 < 99 로 마감 → 풀림
 
 
-def test_b_released_after_252_trading_days():
-    pos = _pos(qty=200, cash=80_000, greed=[(TODAY - timedelta(days=400), 99.0)])
+def test_b_released_after_refill_days():
+    # 2026-11-17: B 기간 252 → 378거래일. 600일(약 428거래일) 지나면 풀림
+    pos = _pos(qty=200, cash=80_000, greed=[(TODAY - timedelta(days=600), 99.0)])
     o = _us(pos, 40, {"target": .6, "hi1": 120.0, "tq_now": 100.0}, tq_closes=closes([100.0, 101.0, 102.0, 100.5]))
     assert o and o[0].side == "buy"
+
+
+def test_b_still_capped_before_refill_days():
+    # 400일(약 285거래일) — 예전 252 기준이면 풀렸겠지만 378 기준이라 아직 최소 비중까지만
+    pos = _pos(qty=200, cash=80_000, greed=[(TODAY - timedelta(days=400), 99.0)])
+    o = _us(pos, 40, {"target": .6, "hi1": 120.0, "tq_now": 100.0}, tq_closes=closes([100.0, 101.0, 102.0, 100.5]))
+    assert len(o) == 1 and o[0].side == "hold" and "A+B 의 B" in o[0].note
 
 
 def test_b_not_released_on_sale_day():

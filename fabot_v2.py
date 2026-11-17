@@ -89,14 +89,14 @@ KRW_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "KRW")   # 0.3686
 CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 1.0, .05      # 목표 = 20% + 80%·S(2026-11-17 인선: 제곱 → 직선, 엔진 CURVE 와 같게), 5%p 이상 모자라면 채움
 S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
-CAPE_K = 1.6            # 2026-10-26 인선: 1.7 → 1.6 (v2 엔진 1998~ MDD −46.2% → −40.6%, 연수익 15.3% → 15.0%)
+CAPE_K = 1.5            # 2026-11-17 인선: 1.6 → 1.5 (첫 6개월 점검 reoptimize.py 판정 ①~④ 통과, 엔진 fa-journey PR #24). 이전: 10-26 1.7 → 1.6
 # 2026-11-17 인선: 절반 팔기 72 → 71, 최소 비중까지 77 → 78, 탐욕 매도 뒤 쉬는 거래일 4 → 42 → 40(약 2달)
 # — '빨리 절반을 처리하고 나머지는 가져간다'. 엔진(fa-journey SELL_HALF_FG/SELL_ALL_FG/SELL_GAP_DAYS)과 같게. 판정 ①~④ 통과
 SELL_HALF, SELL_ALL, SELL_GAP_DAYS = 71, 78, 40
 _OLD_SELL_TH = (72, 77)   # 11-17 전 탐욕 매도 메모('F&G 73 ≥ 72 …')도 탐욕 매도로 알아보기
 # 2026-11-16 인선 결정 A+B: A 하락장(TQQQ 1년 최고가 −30% 넘게 아래)이면 탐욕 매도 쉼,
 # B 탐욕으로 판 뒤엔 그 판 값보다 낮아지기 전까지(최대 252거래일) TQQQ 칸을 최소 비중(CURVE_BASE)까지만 채움
-AB_BEAR_DD, AB_REFILL_DAYS = .30, 252
+AB_BEAR_DD, AB_REFILL_DAYS = .30, 378   # 2026-11-17 인선: B 기간 252 → 378거래일. A 의 최고가 창도 같이(엔진과 같음)
 DCA_WEEKS = 26          # (옛 규칙 — 10-15부터 버크셔는 사다리식)
 RSI_LEN, RSI_ACCEL_TH, RSI_ACCEL_ADD = 14, 30, .40      # FA곡선 RSI 가속 (TQQQ 일봉)
 LAD_RSI, LAD_UNIT, LAD_GAP, LAD_DEADLINE = 40, .10, 21, 252
@@ -326,7 +326,7 @@ def fear_score(fg_now: float, fg_history: list[tuple[date, float]], tqqq_now: fl
     f_dd = min(1., max(0., dd / S_DD_FULL))
     f_run = min(1., run / S_RUN_FULL)
     S = S_FG_W * f_fg + S_DD_W * f_dd + S_RUN_W * f_run
-    hi1 = max([c for _, c in tqqq_closes[-252:]] + [tqqq_now])     # A+B 의 A: TQQQ 1년(252거래일) 최고가
+    hi1 = max([c for _, c in tqqq_closes[-AB_REFILL_DAYS:]] + [tqqq_now])     # A+B 의 A: TQQQ B 기간(378거래일) 최고가 — 엔진 hi1 과 같은 창
     return {"S": S, "target": CURVE_BASE + (1 - CURVE_BASE) * S ** CURVE_POW, "dd": dd, "hi2": hi2, "hi1": hi1, "tq_now": tqqq_now,
             "run": run, "f_fg": f_fg, "f_dd": f_dd, "f_run": f_run}
 
