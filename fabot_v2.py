@@ -86,7 +86,7 @@ USD_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "USD")   # 0.6314
 KRW_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "KRW")   # 0.3686
 
 # 규칙 숫자 (규칙서 10-13 오후판)
-CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 2.0, .05      # 목표 = 20% + 80%·S², 5%p 이상 모자라면 채움
+CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 1.0, .05      # 목표 = 20% + 80%·S(2026-11-17 인선: 제곱 → 직선, 엔진 CURVE 와 같게), 5%p 이상 모자라면 채움
 S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
 CAPE_K = 1.6            # 2026-10-26 인선: 1.7 → 1.6 (v2 엔진 1998~ MDD −46.2% → −40.6%, 연수익 15.3% → 15.0%)
