@@ -37,7 +37,7 @@ def load_env() -> dict[str, bool]:
     for f in ENV_FILES:
         if not f.exists():
             continue
-        for line in f.read_text(encoding="utf-8").splitlines():
+        for line in f.read_text(encoding="utf-8-sig").splitlines():   # PowerShell 이 쓴 .env 는 BOM 이 붙음
             k, sep, v = line.strip().partition("=")
             k = k.strip()
             if sep and k in ENV_NAMES and not os.environ.get(k) and v.strip():
