@@ -1,0 +1,80 @@
+# FA 투자 에이전트 — 매일 아침 '오늘 할 일'과 이상 찾기 (2026-11-18 인선: "진행해 주세요", 365 챌린지 11/23 주)
+# 도구 6개(신호·규칙 엔진·계좌 대조·장부·주문 상태·알림)를 에이전트가 골라 쓴다. 주문은 내지 않는다(주문 도구 없음 —
+# 주문은 auto-trade.yml 이 정해진 시각에만). 여기서는 지금 계좌 키가 있어서 실제 계좌 대조까지 한다(FA_AGENT_USE_BROKER=1).
+# 보고서는 실행 요약에 매일 남고, 텔레그램은 '이상이 있거나 지난밤·오늘 매매가 있던 날'만 간다(소통 밀당 — 조용한 날은 안 보냄).
+# 필요한 비밀값: CLAUDE_CODE_OAUTH_TOKEN (인선이 `claude setup-token` 으로 만들어 직접 등록).
+name: FA agent (daily)
+
+on:
+  schedule:
+    - cron: "30 22 * * 0-4"     # 평일 07:30 KST — 미국장 마감 주문(04:40~06:10) 뒤, 국내장 열기 전
+  workflow_dispatch:
+    inputs:
+      send:
+        description: "텔레그램 보내기 허락(에이전트가 이상·매매가 있을 때만 보냄)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fa-agent
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 패키지 설치 (자동매매 + 에이전트 + Claude Code)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r agent/requirements.txt
+          npm install -g @anthropic-ai/claude-code
+
+      - name: Claude 인증 확인
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN 비밀값이 없어요 — 인선 님이 claude setup-token 으로 만들어 저장소 Secrets 에 등록해 주세요"
+            exit 1
+          fi
+
+      - name: 에이전트 실행
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          FA_AGENT_MODEL: ${{ vars.FA_AGENT_MODEL }}
+          FA_AGENT_USE_BROKER: "1"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIS_PAPER_APP_KEY: ${{ secrets.KIS_PAPER_APP_KEY }}
+          KIS_PAPER_APP_SECRET: ${{ secrets.KIS_PAPER_APP_SECRET }}
+          KIS_PAPER_STOCK: ${{ secrets.KIS_PAPER_STOCK }}
+          KIWOOM_PAPER_APP_KEY: ${{ secrets.KIWOOM_PAPER_APP_KEY }}
+          KIWOOM_PAPER_APP_SECRET: ${{ secrets.KIWOOM_PAPER_APP_SECRET }}
+          SEND: ${{ github.event_name == 'schedule' || inputs.send == true }}
+        run: |
+          set -o pipefail
+          if [ "$SEND" = "true" ]; then FLAG=--send; else FLAG=; fi
+          python agent/fa_agent.py $FLAG | tee agent_out.txt
+
+      - name: 실행 요약에 보고서 남기기
+        if: always()
+        run: |
+          {
+            echo "## FA 투자 에이전트 — 오늘 할 일"
+            echo '```'
+            sed -n '/^========================================$/,/^========================================$/p' agent_out.txt 2>/dev/null || true
+            grep -E "^(도구|사용량|⚠️)" agent_out.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
