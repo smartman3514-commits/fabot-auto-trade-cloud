@@ -93,8 +93,11 @@ def market_signal() -> dict:
     rsi = v2.rsi_wilder([c for _, c in tq])
     cape = v2.cape_block()
     fg = float(info["score"])
-    zone = ("탐욕 매도 구간" if fg >= v2.SELL_HALF else "평시(커버드콜 매수 구간)" if fg <= v2.PEACE_HI and fg > 25
-            else "공포 구간" if fg <= 25 else "중립")
+    word = "극단적 공포" if fg < 25 else "공포" if fg < 45 else "중립" if fg <= 55 else "탐욕" if fg < 75 else "극단적 탐욕"
+    flags = [f for f, on in (("탐욕 매도 조건(F&G ≥ %d)" % v2.SELL_HALF, fg >= v2.SELL_HALF),
+                             ("커버드콜 평시 매수 조건(F&G ≤ %d)" % v2.PEACE_HI, fg <= v2.PEACE_HI),
+                             ("CAPE 막기 중 공포 매수 조건(F&G ≤ %d, 나스닥 낙폭 등 더 봄)" % v2.DIP_FG, fg <= v2.DIP_FG)) if on]
+    zone = word + (" · " + " · ".join(flags) if flags else "")
     return {"fg": round(fg, 1), "fg_date": str(info.get("date") or info.get("timestamp") or ""), "zone": zone,
             "fear_S": round(fear["S"], 2), "curve_target": round(fear["target"], 3), "tqqq_rsi": round(rsi, 1),
             "tqqq_close": [str(tq[-1][0]), tq[-1][1]],
