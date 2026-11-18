@@ -56,6 +56,13 @@ def version() -> str:
     return (os.getenv("GITHUB_SHA") or "local")[:7]
 
 
+def _ours(span) -> bool:
+    """우리가 연 기록(langfuse-sdk)만 보낸다. 11-18 첫 기록에서 MCP 라이브러리(scope mcp-python-sdk)가 도구마다
+    따로 트레이스를 하나씩 더 만들어(실행 한 번에 7개로 흩어짐) 막음 — 같은 내용은 tool:이름 칸에 이미 있다."""
+    scope = getattr(getattr(span, "instrumentation_scope", None), "name", "") or ""
+    return scope == "langfuse-sdk"
+
+
 def lf():
     global _client
     if _client is None:
@@ -65,7 +72,8 @@ def lf():
             logging.getLogger("langfuse").setLevel(logging.ERROR)
         base = _key("LANGFUSE_BASE_URL") or None
         _client = Langfuse(public_key=_key("LANGFUSE_PUBLIC_KEY") or None, secret_key=_key("LANGFUSE_SECRET_KEY") or None,
-                           base_url=base, tracing_enabled=on, mask=mask, environment=env_name())
+                           base_url=base, tracing_enabled=on, mask=mask, environment=env_name(),
+                           should_export_span=_ours)
     return _client
 
 

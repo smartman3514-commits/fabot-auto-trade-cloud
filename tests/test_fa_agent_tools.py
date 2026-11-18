@@ -87,3 +87,17 @@ def test_tracing_strips_key_whitespace(monkeypatch):
     import tracing as TR
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", ' "pk-lf-1"\n')
     assert TR._key("LANGFUSE_PUBLIC_KEY") == "pk-lf-1"
+
+
+def test_tracing_exports_only_our_spans():
+    import tracing as TR
+
+    class Scope:
+        def __init__(self, n):
+            self.name = n
+
+    class Span:
+        def __init__(self, n):
+            self.instrumentation_scope = Scope(n)
+    assert TR._ours(Span("langfuse-sdk")) is True
+    assert TR._ours(Span("mcp-python-sdk")) is False
