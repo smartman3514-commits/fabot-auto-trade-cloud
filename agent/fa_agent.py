@@ -33,7 +33,7 @@ import fa_tools as T  # noqa: E402
 
 _WIN_CLI = Path.home() / ".local" / "bin" / "claude.exe"
 CLI_PATH = os.environ.get("CLAUDE_CLI_PATH") or (str(_WIN_CLI) if _WIN_CLI.exists() else None)
-MODEL = os.environ.get("FA_AGENT_MODEL")   # 비우면 Claude Code 기본 모델
+MODEL = os.environ.get("FA_AGENT_MODEL") or "claude-sonnet-5-5"   # 11-18: 운영·평가를 같은 모델로 고정(기본 모델은 PC마다 달라 비용 $1.30 vs $0.05)
 
 SYSTEM_PROMPT = """당신은 FA 투자 에이전트예요. 두 모의 계좌(한투 v2, 키움 국내포트)의 규칙 자동매매를 매일 운영하는 팀원이에요.
 
@@ -45,6 +45,8 @@ SYSTEM_PROMPT = """당신은 FA 투자 에이전트예요. 두 모의 계좌(한
    장부와 계좌가 다름, 자료 경고(값이 2% 넘게 다름 등), 도구 실패.
    알아 둘 것: auto_trade_workflow 는 서머타임 대응·보험 실행 때문에 하루 여러 번 돌고, 창 밖이면 아무것도 안 하고 끝나요 —
    창 밖 실행 자체는 정상이에요. 이상은 '정해진 창(미국 04:40~06:10, 국내 15:05~15:35) 안에 실행 기록이 하나도 없을 때'예요.
+   승인: fa_order_gate 의 approval 에서 required=true 인데 approved=false 인 계좌는 승인 전까지 주문이 하나도 안 나가요(오늘 주문이 없어도).
+   이건 고쳐야 할 이상이고, '사람이 할 일'에 그 계좌의 승인 여부를 정하라고 써요.
 5. 알릴 날만 fa_notify 에 보고서 본문을 넣어 한 번 불러요(실제로 보낼지는 코드가 한 번 더 정해요).
    알릴 날 = 고쳐야 할 이상이 있거나, 장부에 어제·오늘 실제 매수·매도가 있는 날. 조용한 날(모두 대기, 이상 없음)은 부르지 않아요 —
    자주 보내면 지겹고, 안 보내면 잊어요(소통 밀당). 이미 설명된 경고(예: 규칙대로 쉰 것)는 '고쳐야 할 이상'이 아니에요.
@@ -113,6 +115,7 @@ async def t_notify(args):
     return await _run(T.notify, args.get("text") or "")
 
 
+VERBOSE = True
 TOOLS = [t_signal, t_plan, t_check, t_ledger, t_gate, t_notify]
 
 
@@ -126,15 +129,16 @@ def options() -> ClaudeAgentOptions:
     return ClaudeAgentOptions(**kw)
 
 
-async def run_agent() -> dict:
+async def run_agent(now: str | None = None) -> dict:
     report, usage, calls = None, None, []
-    prompt = f"지금은 {datetime.now(T.KST):%Y-%m-%d %H:%M} KST 예요. 오늘 할 일 보고서를 써 줘요."
+    prompt = f"지금은 {now or format(datetime.now(T.KST), '%Y-%m-%d %H:%M')} KST 예요. 오늘 할 일 보고서를 써 줘요."
     async for msg in query(prompt=prompt, options=options()):
         if isinstance(msg, AssistantMessage):
             for b in msg.content:
                 if isinstance(b, ToolUseBlock):
                     calls.append(b.name.removeprefix("mcp__fa__"))
-                    print(f"  · 도구: {calls[-1]} {json.dumps(b.input, ensure_ascii=False) if b.input else ''}", flush=True)
+                    if VERBOSE:
+                        print(f"  · 도구: {calls[-1]} {json.dumps(b.input, ensure_ascii=False) if b.input else ''}", flush=True)
                 elif isinstance(b, TextBlock):
                     report = b.text
         elif isinstance(msg, ResultMessage):

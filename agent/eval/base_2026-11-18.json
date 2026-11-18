@@ -1,0 +1,492 @@
+{
+ "market_signal": {
+  "fg": 25.2,
+  "fg_date": "2026-11-17",
+  "zone": "공포 · 커버드콜 평시 매수 조건(F&G ≤ 50)",
+  "fear_S": 0.56,
+  "curve_target": 0.648,
+  "tqqq_rsi": 34.6,
+  "tqqq_close": [
+   "2026-11-17",
+   51.810001373291016
+  ],
+  "cape": 38.76,
+  "cape_line": 33.9,
+  "cape_block": true,
+  "cape_text": "CAPE 38.76(multpl 4:00 PM EST, Tue Nov 17 종가 · 직접 계산 37.93) / 기준선 33.9 → 막힘 ⚠️ multpl 38.76 과 직접 계산 37.93 이 2% 넘게 다름",
+  "rules": {
+   "sell_half_fg": 71,
+   "sell_all_fg": 78,
+   "sell_gap_days": 40,
+   "dip_fg": 10,
+   "cape_k": 1.5,
+   "peace_fg_max": 50
+  }
+ },
+ "rule_plan_한투 v2": {
+  "account": "한투 v2",
+  "price_source": "한투 가격 = 야후 종가(증권사 키 안 씀) · 키움 가격 = 야후 종가(증권사 키 안 씀)",
+  "summary": [
+   "새 버전 평가 207,987,968원 (달러 칸 $100,000 · 원화 칸 75,742,968원, 환율 1,322.5)",
+   "칸별 비중: TQQQ 26%(투자 0%) · QLD 26%(투자 0%) · QQQ 6%(투자 0%) · SCHD 3%(투자 0%) · BRK 3%(투자 0%) · CC_DIV 1%(투자 100%) · CC_NAS 1%(투자 100%) · GOLD 34%(투자 15%)"
+  ],
+  "us_close_orders": [
+   {
+    "칸": "TQQQ",
+    "상품": "TQQQ",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "USD",
+    "수량": null,
+    "이유": "투자 비중 0% < 목표 65%이지만 CAPE 막기(CAPE 38.76 > 기준선 33.9)"
+   },
+   {
+    "칸": "QLD",
+    "상품": "QLD",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "USD",
+    "수량": null,
+    "이유": "투자 비중 0% < 목표 65%이지만 CAPE 막기(CAPE 38.76 > 기준선 33.9)"
+   },
+   {
+    "칸": "QQQ",
+    "상품": "QQQM",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "USD",
+    "수량": null,
+    "이유": "투자 비중 0% < 목표 65%이지만 CAPE 막기(CAPE 38.76 > 기준선 33.9)"
+   },
+   {
+    "칸": "BRK",
+    "상품": "BRK.B",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "USD",
+    "수량": null,
+    "이유": "사다리: 버크셔B RSI가 40 이하로 내려오기를 기다리는 중(시작 후 15거래일, 1년 지나면 전부 매수)"
+   },
+   {
+    "칸": "SCHD",
+    "상품": "SCHD",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "USD",
+    "수량": null,
+    "이유": "사다리: SCHD RSI가 40 이하로 내려오기를 기다리는 중(시작 후 15거래일, 1년 지나면 전부 매수)"
+   }
+  ],
+  "kr_close_orders": [
+   {
+    "칸": "GOLD",
+    "상품": "ACE KRX금현물(411060)",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "KRW",
+    "수량": null,
+    "이유": "이번 차례(1/6) 몫은 다 삼 — 다음 차례를 기다림"
+   }
+  ],
+  "windows": {
+   "us": "04:40~06:10 KST(미국장 마감 직전, 서머타임에 따라 05:00/06:00 마감)",
+   "kr": "15:05~15:35 KST(국내장 마감 동시호가)"
+  },
+  "year_end_rebalance_days": {
+   "USD": "2026-12-31",
+   "KRW": "2026-12-30"
+  },
+  "note": "미국 칸 주문은 미국장 마감 창, 원화 칸 주문은 국내장 마감 창에 GitHub Actions 가 낸다. 연말 비중 맞추기 날에는 그 계획이 먼저다."
+ },
+ "rule_plan_키움 국내포트": {
+  "account": "키움 국내포트",
+  "price_source": "한투 가격 = 야후 종가(증권사 키 안 씀) · 키움 가격 = 야후 종가(증권사 키 안 씀)",
+  "summary": [
+   "국내포트 평가 496,140,703원 (재원 500,000,000원)"
+  ],
+  "kr_close_orders": [
+   {
+    "칸": "GOLD",
+    "상품": "ACE KRX금현물(411060)",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "KRW",
+    "수량": null,
+    "이유": "이번 차례(1/6) 몫은 다 삼 — 다음 차례를 기다림"
+   },
+   {
+    "칸": "TQ",
+    "상품": "TIGER 미국나스닥100레버리지(합성)(418660) 파는 칸",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "KRW",
+    "수량": null,
+    "이유": "투자 비중 0% < 목표 65%이지만 CAPE 막기(CAPE 38.76 > 기준선 33.9)"
+   },
+   {
+    "칸": "QL",
+    "상품": "TIGER 미국나스닥100레버리지(합성)(418660) 안 파는 칸",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "KRW",
+    "수량": null,
+    "이유": "투자 비중 0% < 목표 65%이지만 CAPE 막기(CAPE 38.76 > 기준선 33.9)"
+   },
+   {
+    "칸": "QQ",
+    "상품": "KODEX 미국나스닥100(379810)",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "KRW",
+    "수량": null,
+    "이유": "투자 비중 0% < 목표 65%이지만 CAPE 막기(CAPE 38.76 > 기준선 33.9)"
+   },
+   {
+    "칸": "DIV",
+    "상품": "TIGER 미국배당다우존스(458730)",
+    "할 일": "대기",
+    "금액": null,
+    "통화": "KRW",
+    "수량": null,
+    "이유": "사다리: TIGER 미국배당다우존스 RSI가 40 이하로 내려오기를 기다리는 중(시작 후 16거래일, 1년 지나면 전부 매수)"
+   }
+  ],
+  "windows": {
+   "kr": "15:05~15:35 KST(국내장 마감 동시호가)"
+  },
+  "year_end_rebalance_days": {
+   "KRW": "2026-12-30"
+  },
+  "note": "주문은 국내장 마감 창에 GitHub Actions 가 낸다. 연말 비중 맞추기 날에는 그 계획이 먼저다."
+ },
+ "ledger": {
+  "since": "2026-11-11",
+  "count": 18,
+  "rows": [
+   {
+    "trade_date": "2026-11-16",
+    "account": "키움 국내포트",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 37521,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-16 1일, 평균 현금 456,500,818원)"
+   },
+   {
+    "trade_date": "2026-11-16",
+    "account": "한투 v2",
+    "ticker": "현금(이자,달러)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 10958,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 달러(원화 환산) 현금 × 3% ÷ 365, 2026-11-16 1일, 평균 현금 133,325,000원)"
+   },
+   {
+    "trade_date": "2026-11-16",
+    "account": "한투 v2",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 4980,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-16 1일, 평균 현금 60,592,658원)"
+   },
+   {
+    "trade_date": "2026-11-15",
+    "account": "키움 국내포트",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 37521,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-15 1일, 평균 현금 456,500,818원)"
+   },
+   {
+    "trade_date": "2026-11-15",
+    "account": "한투 v2",
+    "ticker": "현금(이자,달러)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 10963,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 달러(원화 환산) 현금 × 3% ÷ 365, 2026-11-15 1일, 평균 현금 133,378,003원)"
+   },
+   {
+    "trade_date": "2026-11-15",
+    "account": "한투 v2",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 4980,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-15 1일, 평균 현금 60,592,658원)"
+   },
+   {
+    "trade_date": "2026-11-14",
+    "account": "키움 국내포트",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 37521,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-14 1일, 평균 현금 456,500,818원)"
+   },
+   {
+    "trade_date": "2026-11-14",
+    "account": "한투 v2",
+    "ticker": "현금(이자,달러)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 10963,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 달러(원화 환산) 현금 × 3% ÷ 365, 2026-11-14 1일, 평균 현금 133,378,003원)"
+   },
+   {
+    "trade_date": "2026-11-14",
+    "account": "한투 v2",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 4980,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-14 1일, 평균 현금 60,592,658원)"
+   },
+   {
+    "trade_date": "2026-11-13",
+    "account": "키움 국내포트",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 37521,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-13 1일, 평균 현금 456,500,818원)"
+   },
+   {
+    "trade_date": "2026-11-13",
+    "account": "한투 v2",
+    "ticker": "현금(이자,달러)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 10963,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 달러(원화 환산) 현금 × 3% ÷ 365, 2026-11-13 1일, 평균 현금 133,378,003원)"
+   },
+   {
+    "trade_date": "2026-11-13",
+    "account": "한투 v2",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 4980,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-13 1일, 평균 현금 60,592,658원)"
+   },
+   {
+    "trade_date": "2026-11-12",
+    "account": "키움 국내포트",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 37521,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-12 1일, 평균 현금 456,500,818원)"
+   },
+   {
+    "trade_date": "2026-11-12",
+    "account": "한투 v2",
+    "ticker": "현금(이자,달러)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 10983,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 달러(원화 환산) 현금 × 3% ÷ 365, 2026-11-12 1일, 평균 현금 133,626,001원)"
+   },
+   {
+    "trade_date": "2026-11-12",
+    "account": "한투 v2",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 4980,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-12 1일, 평균 현금 60,592,658원)"
+   },
+   {
+    "trade_date": "2026-11-11",
+    "account": "키움 국내포트",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 37521,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-11 1일, 평균 현금 456,500,818원)"
+   },
+   {
+    "trade_date": "2026-11-11",
+    "account": "한투 v2",
+    "ticker": "현금(이자,달러)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 11029,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 달러(원화 환산) 현금 × 3% ÷ 365, 2026-11-11 1일, 평균 현금 134,191,003원)"
+   },
+   {
+    "trade_date": "2026-11-11",
+    "account": "한투 v2",
+    "ticker": "현금(이자,원화)",
+    "action": "dividend",
+    "quantity": 1,
+    "price": 4980,
+    "fg_score": null,
+    "memo": "추정 현금 이자(RP 연 3% 일 단위: 하루 끝 원화 현금 × 3% ÷ 365, 2026-11-11 1일, 평균 현금 60,592,658원)"
+   }
+  ]
+ },
+ "order_gate": {
+  "agent_places_orders": false,
+  "executor": "GitHub Actions auto-trade.yml — 정해진 시각에만, 규칙 엔진 수량으로만",
+  "windows": {
+   "us": "04:40~06:10 KST(미국장 마감 직전, 서머타임에 따라 05:00/06:00 마감)",
+   "kr": "15:05~15:35 KST(국내장 마감 동시호가)"
+  },
+  "approval": {
+   "한투 v2": {
+    "required": false,
+    "approved": true,
+    "by": "인선",
+    "at": "2026-11-10"
+   },
+   "키움 국내포트": {
+    "required": false,
+    "approved": true,
+    "by": "인선",
+    "at": "2026-11-10"
+   }
+  },
+  "recent_runs_30h": [
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 10:35",
+    "detail": ""
+   },
+   {
+    "job": "briefing_kr_open",
+    "ran_at_kst": "11-18 07:58",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 06:45",
+    "detail": ""
+   },
+   {
+    "job": "close_watch_alert_us",
+    "ran_at_kst": "11-18 06:40",
+    "detail": "TQQQ 매수 구간(F&G 30 이하)입니다 — 매수가 빠졌을 수 있어 수동 확인이 필요합니다."
+   },
+   {
+    "job": "briefing_us_close",
+    "ran_at_kst": "11-18 06:28",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 06:16",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 05:46",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 05:15",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 04:45",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 04:15",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-18 00:53",
+    "detail": ""
+   },
+   {
+    "job": "close_notified_kr",
+    "ran_at_kst": "11-18 00:53",
+    "detail": ""
+   },
+   {
+    "job": "briefing_us_open",
+    "ran_at_kst": "11-17 21:58",
+    "detail": ""
+   },
+   {
+    "job": "briefing_kr_close",
+    "ran_at_kst": "11-17 15:58",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-17 15:20",
+    "detail": ""
+   },
+   {
+    "job": "close_notified_kr",
+    "ran_at_kst": "11-17 15:20",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-17 11:27",
+    "detail": ""
+   },
+   {
+    "job": "briefing_kr_open",
+    "ran_at_kst": "11-17 07:58",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-17 06:45",
+    "detail": ""
+   },
+   {
+    "job": "briefing_us_close",
+    "ran_at_kst": "11-17 06:28",
+    "detail": ""
+   },
+   {
+    "job": "auto_trade_workflow",
+    "ran_at_kst": "11-17 06:16",
+    "detail": ""
+   },
+   {
+    "job": "close_notified_us",
+    "ran_at_kst": "11-17 06:16",
+    "detail": ""
+   }
+  ],
+  "stop_request": "멈추기 신청은 아직 화면이 없음(11/30 주 할 일) — 지금은 approval 값으로만 멈출 수 있음"
+ },
+ "account_check": {
+  "ok": true,
+  "problems": [],
+  "info": [
+   "한투 v2: 달러 $100,000(장부 $100,000) · 원화 칸 장부 15,000,000원(계좌 260,000,000원, v2 밖 원화 포함)",
+   "키움 국내포트: 원화 456,500,000원(장부 456,430,000원)"
+  ],
+  "skipped": []
+ }
+}
