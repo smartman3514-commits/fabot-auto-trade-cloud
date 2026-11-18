@@ -55,9 +55,13 @@ def score(sc: dict, report: str, notified: bool) -> list[tuple[str, bool]]:
 
 
 def main():
+    import os
+    os.environ.setdefault("FA_AGENT_ENV", "eval")   # Langfuse 에서 운영 기록과 나눠 보기
+    T.load_env()                                      # Langfuse 키(있으면)
     pick = {int(x) for x in sys.argv[1:]}
     A.VERBOSE = False
-    out_dir = HERE / "out"; out_dir.mkdir(exist_ok=True)
+    # 고른 것만 돌리면 out/partial 에 남겨 전체 점수표(out/scorecard.md)를 덮지 않는다(11-18 한 번 덮어씀)
+    out_dir = HERE / "out" / ("partial" if pick else ""); out_dir.mkdir(parents=True, exist_ok=True)
     results = []
     for sc in SCENARIOS:
         if pick and sc["id"] not in pick:
@@ -66,13 +70,17 @@ def main():
         patch(sc["make"](), notes)
         t0 = time.time()
         try:
-            res = anyio.run(A.run_agent, NOW)
+            res = anyio.run(lambda: A.run_agent(NOW, scenario=str(sc['id']), finish=False))
         except Exception as exc:  # noqa: BLE001
             res = {"report": "", "tool_calls": [], "usage": {"error": f"{type(exc).__name__}: {exc}"}}
         checks = score(sc, res["report"], bool(notes))
         ok = all(c for _, c in checks)
+        if res.get("trace") is not None:   # Langfuse: 채점 결과를 그 실행의 트레이스에 점수로 붙인다
+            bad = '; '.join(n for n, c in checks if not c) or None
+            res["trace"].finish(res["report"], res["usage"], res.get("raw_usage"), bool(notes), res["tool_calls"],
+                                {"scenario-pass": (1 if ok else 0, bad)})
         results.append({"id": sc["id"], "name": sc["name"], "pass": ok, "checks": checks, "notified": bool(notes),
-                        "tools": res["tool_calls"], "usage": res["usage"], "seconds": round(time.time() - t0, 1), "report": res["report"]})
+                        "tools": res["tool_calls"], "usage": res["usage"], "trace_id": res.get("trace_id"), "seconds": round(time.time() - t0, 1), "report": res["report"]})
         print(f"{'통과' if ok else '틀림'}  {sc['id']:>2}. {sc['name']}  ({sum(c for _, c in checks)}/{len(checks)})  알림={bool(notes)}  "
               f"도구 {len(res['tool_calls'])}번  {res['usage']}", flush=True)
     n_ok = sum(r["pass"] for r in results)

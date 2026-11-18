@@ -1,2 +1,3 @@
 claude-agent-sdk>=0.2
 anyio
+langfuse==5.1.0

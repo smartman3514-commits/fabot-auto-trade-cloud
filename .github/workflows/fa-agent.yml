@@ -3,6 +3,7 @@
 # 주문은 auto-trade.yml 이 정해진 시각에만). 여기서는 지금 계좌 키가 있어서 실제 계좌 대조까지 한다(FA_AGENT_USE_BROKER=1).
 # 보고서는 실행 요약에 매일 남고, 텔레그램은 '이상이 있거나 지난밤·오늘 매매가 있던 날'만 간다(소통 밀당 — 조용한 날은 안 보냄).
 # 필요한 비밀값: CLAUDE_CODE_OAUTH_TOKEN (인선이 `claude setup-token` 으로 만들어 직접 등록).
+# 있으면 기록: LANGFUSE_PUBLIC_KEY·LANGFUSE_SECRET_KEY(없으면 Langfuse 기록만 꺼지고 에이전트는 돈다, 11-18).
 name: FA agent (daily)
 
 on:
@@ -53,6 +54,10 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           FA_AGENT_MODEL: ${{ vars.FA_AGENT_MODEL }}
           FA_AGENT_USE_BROKER: "1"
+          FA_AGENT_ENV: github
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL || 'https://us.cloud.langfuse.com' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

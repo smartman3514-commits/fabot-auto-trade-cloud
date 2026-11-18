@@ -63,3 +63,27 @@ def test_load_env_reports_presence_only(monkeypatch, tmp_path):
     out = T.load_env()
     assert out["SUPABASE_URL"] is True and all(isinstance(v, bool) for v in out.values())
     assert "OTHER" not in out
+
+
+def test_tracing_off_without_keys(monkeypatch):
+    import tracing as TR
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    assert TR.enabled() is False
+    run = TR.Run("프롬프트", "claude-sonnet-5-5")
+    with run.tool("fa_ledger", [7]) as obs:
+        run.tool_result(obs, {"rows": []})
+    run.finish("보고서", {"cost_usd": 0.01}, {"input_tokens": 1}, False, ["fa_ledger"])   # 아무것도 안 하고 끝나야 함
+    assert run.trace_id is None
+
+
+def test_tracing_mask_inside_dicts():
+    import tracing as TR
+    out = TR.mask(data={"a": ["연락 010-1234-5678", {"b": "x@y.com"}]})
+    assert out == {"a": ["연락 [전화번호]", {"b": "[이메일]"}]}
+
+
+def test_tracing_strips_key_whitespace(monkeypatch):
+    import tracing as TR
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", ' "pk-lf-1"\n')
+    assert TR._key("LANGFUSE_PUBLIC_KEY") == "pk-lf-1"

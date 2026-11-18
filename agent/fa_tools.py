@@ -27,7 +27,8 @@ ACCOUNTS = ("한투 v2", "키움 국내포트")
 ENV_FILES = [ROOT / ".env", ROOT.parent / "fabot-trade-journal" / ".env", ROOT.parent / "fabot-daily-briefing-agent" / ".env"]
 ENV_NAMES = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
              "KIS_PAPER_APP_KEY", "KIS_PAPER_APP_SECRET", "KIS_PAPER_STOCK",
-             "KIWOOM_PAPER_APP_KEY", "KIWOOM_PAPER_APP_SECRET")
+             "KIWOOM_PAPER_APP_KEY", "KIWOOM_PAPER_APP_SECRET",
+             "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL")
 WINDOWS = {"us": "04:40~06:10 KST(미국장 마감 직전, 서머타임에 따라 05:00/06:00 마감)", "kr": "15:05~15:35 KST(국내장 마감 동시호가)"}
 
 

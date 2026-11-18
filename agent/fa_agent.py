@@ -30,6 +30,7 @@ from claude_agent_sdk import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fa_tools as T  # noqa: E402
+import tracing as TR  # noqa: E402
 
 _WIN_CLI = Path.home() / ".local" / "bin" / "claude.exe"
 CLI_PATH = os.environ.get("CLAUDE_CLI_PATH") or (str(_WIN_CLI) if _WIN_CLI.exists() else None)
@@ -77,42 +78,59 @@ def _err(exc: Exception) -> dict:
             "is_error": True}
 
 
-async def _run(fn, *a):
-    try:
-        return _ok(await anyio.to_thread.run_sync(lambda: fn(*a)))
-    except Exception as exc:  # noqa: BLE001 — 도구 실패는 에이전트에게 그대로 알린다
-        return _err(exc)
+RUN: TR.Run | None = None   # 지금 실행의 Langfuse 트레이스(키가 없으면 아무것도 안 함)
+
+
+async def _run(name: str, fn, *a):
+    with (RUN.tool(name, list(a)) if RUN else _nullctx()) as obs:
+        try:
+            result = await anyio.to_thread.run_sync(lambda: fn(*a))
+        except Exception as exc:  # noqa: BLE001 — 도구 실패는 에이전트에게 그대로 알린다
+            if RUN:
+                RUN.tool_result(obs, error=f"{type(exc).__name__}: {str(exc)[:300]}")
+            return _err(exc)
+        if RUN:
+            RUN.tool_result(obs, result)
+        return _ok(result)
+
+
+class _nullctx:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *a):
+        return False
 
 
 @tool("fa_market_signal", "오늘의 공포·탐욕 지수(CNN F&G), 공포 점수·FA곡선 목표 비중, TQQQ RSI, CAPE 막기 여부와 지금 규칙 숫자.", {})
 async def t_signal(args):
-    return await _run(T.market_signal)
+    return await _run("fa_market_signal", T.market_signal)
 
 
 @tool("fa_rule_plan", "규칙 엔진이 정한 오늘 할 일(칸별 매수·매도·대기, 금액, 이유)과 평가 요약. account 는 '한투 v2' 또는 '키움 국내포트'. 주문은 내지 않음.",
       {"account": str})
 async def t_plan(args):
-    return await _run(T.rule_plan, args.get("account") or "한투 v2")
+    return await _run("fa_rule_plan", T.rule_plan, args.get("account") or "한투 v2")
 
 
 @tool("fa_account_check", "실제 증권사 계좌 수량·현금과 장부(Supabase trades)가 맞는지 대조. 조회만 함.", {})
 async def t_check(args):
-    return await _run(T.account_check)
+    return await _run("fa_account_check", T.account_check)
 
 
 @tool("fa_ledger", "최근 N일 매매·배당·이자 기록(두 모의 계좌). account 를 비우면 둘 다.", {"days": int, "account": str})
 async def t_ledger(args):
-    return await _run(T.ledger, int(args.get("days") or 14), args.get("account") or None)
+    return await _run("fa_ledger", T.ledger, int(args.get("days") or 14), args.get("account") or None)
 
 
 @tool("fa_order_gate", "주문이 언제·누가 내는지, 계좌별 승인 상태, 최근 30시간 정시 실행 기록. 이 도구는 주문을 내지 않음.", {})
 async def t_gate(args):
-    return await _run(T.order_gate)
+    return await _run("fa_order_gate", T.order_gate)
 
 
 @tool("fa_notify", "보고서를 텔레그램으로 보냄. 사람이 --send 로 허락한 실행에서만 실제로 나가고, 아니면 미리 보기만 돌려줌.", {"text": str})
 async def t_notify(args):
-    return await _run(T.notify, args.get("text") or "")
+    return await _run("fa_notify", T.notify, args.get("text") or "")
 
 
 VERBOSE = True
@@ -129,22 +147,35 @@ def options() -> ClaudeAgentOptions:
     return ClaudeAgentOptions(**kw)
 
 
-async def run_agent(now: str | None = None) -> dict:
-    report, usage, calls = None, None, []
+async def run_agent(now: str | None = None, scenario: str | None = None, finish: bool = True) -> dict:
+    """finish=False 면 트레이스를 열어 둔 채 돌려준다(평가가 채점 점수를 붙인 뒤 out['trace'].finish(...))."""
+    global RUN
+    report, usage, raw, calls = None, None, None, []
     prompt = f"지금은 {now or format(datetime.now(T.KST), '%Y-%m-%d %H:%M')} KST 예요. 오늘 할 일 보고서를 써 줘요."
-    async for msg in query(prompt=prompt, options=options()):
-        if isinstance(msg, AssistantMessage):
-            for b in msg.content:
-                if isinstance(b, ToolUseBlock):
-                    calls.append(b.name.removeprefix("mcp__fa__"))
-                    if VERBOSE:
-                        print(f"  · 도구: {calls[-1]} {json.dumps(b.input, ensure_ascii=False) if b.input else ''}", flush=True)
-                elif isinstance(b, TextBlock):
-                    report = b.text
-        elif isinstance(msg, ResultMessage):
-            usage = {"turns": msg.num_turns, "seconds": round((msg.duration_ms or 0) / 1000, 1),
-                     "cost_usd": msg.total_cost_usd, "is_error": msg.is_error}
-    return {"report": report, "tool_calls": calls, "usage": usage}
+    RUN = TR.Run(prompt, MODEL, scenario)
+    try:
+        async for msg in query(prompt=prompt, options=options()):
+            if isinstance(msg, AssistantMessage):
+                for b in msg.content:
+                    if isinstance(b, ToolUseBlock):
+                        calls.append(b.name.removeprefix("mcp__fa__"))
+                        if VERBOSE:
+                            print(f"  · 도구: {calls[-1]} {json.dumps(b.input, ensure_ascii=False) if b.input else ''}", flush=True)
+                    elif isinstance(b, TextBlock):
+                        report = b.text
+            elif isinstance(msg, ResultMessage):
+                raw = msg.usage or {}
+                usage = {"turns": msg.num_turns, "seconds": round((msg.duration_ms or 0) / 1000, 1),
+                         "cost_usd": msg.total_cost_usd, "is_error": msg.is_error}
+    except Exception as exc:  # noqa: BLE001 — 실패도 트레이스에 남기고 다시 던진다
+        usage = {"error": f"{type(exc).__name__}: {str(exc)[:300]}", "is_error": True}
+        RUN.finish(report, usage, raw, "fa_notify" in calls, calls)
+        raise
+    out = {"report": report, "tool_calls": calls, "usage": usage, "notified": "fa_notify" in calls,
+           "trace_id": RUN.trace_id, "trace": RUN, "raw_usage": raw}
+    if finish:
+        RUN.finish(report, usage, raw, out["notified"], calls)
+    return out
 
 
 def tools_only() -> None:
