@@ -86,7 +86,7 @@ USD_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "USD")   # 0.6314
 KRW_WEIGHT = sum(s.weight for s in SLEEVES if s.currency == "KRW")   # 0.3686
 
 # 규칙 숫자 (규칙서 10-13 오후판)
-CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 1.0, .05      # 목표 = 20% + 80%·S(2026-11-17 인선: 제곱 → 직선, 엔진 CURVE 와 같게), 5%p 이상 모자라면 채움
+CURVE_BASE, CURVE_POW, CURVE_GAP = .20, 0.8, .05      # 목표 = 20% + 80%·S^0.8(2026-11-19 인선: 1.0 → 0.8, 중간 공포에서 조금 더 삼 — 엔진 fa-journey PR #32 와 같게), 5%p 이상 모자라면 채움
 S_FG_W, S_DD_W, S_RUN_W = .4, .4, .2
 S_DD_FULL, S_RUN_FULL, FEAR_RUN_FG = .60, 60, 35
 CAPE_K = 1.5            # 2026-11-17 인선: 1.6 → 1.5 (첫 6개월 점검 reoptimize.py 판정 ①~④ 통과, 엔진 fa-journey PR #24). 이전: 10-26 1.7 → 1.6
