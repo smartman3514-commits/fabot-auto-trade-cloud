@@ -253,18 +253,23 @@ jobs:
           failed() {
             [ "$(cat "$2" 2>/dev/null || echo 0)" != 0 ] || grep -qs "체결되지 않음\|오류로 중단" "$1"
           }
-          {
-            failed kis_result.txt kis_rc.txt && echo "⚠️ [한국투자] 주문 실패 — 아래 줄과 Actions 로그를 확인하세요"
-            failed kiwoom_result.txt kiwoom_rc.txt && echo "⚠️ [키움] 주문 실패 — 아래 줄과 Actions 로그를 확인하세요"
-            echo "🤖 FABOT 자동매매 실행 ($(date -u -d '+9 hours' '+%Y-%m-%d %H:%M') KST)"
-            echo "현재 규칙: $rules_line"
-            echo ""
-            echo "[한국투자]"
-            summarize kis_result.txt
-            echo ""
-            echo "[키움]"
-            summarize kiwoom_result.txt
-          } > telegram_message.txt
+          # 2026-11-23 인선: "말들이 너무 복잡해서 뭘 했는지 모르겠어요 — '오늘 무슨 일이 있어서 TQQQ 를 00주 매수(000원)' 처럼 요약"
+          # → telegram_summary.py 가 계좌마다 산 것·판 것만 쉬운 말로. 요약기가 실패하면 예전 방식으로(알림이 빠지지 않게).
+          if ! python telegram_summary.py kis_result.txt kiwoom_result.txt kis_rc.txt kiwoom_rc.txt > telegram_message.txt 2>summary_err.txt              || [ ! -s telegram_message.txt ]; then
+            cat summary_err.txt
+            {
+              failed kis_result.txt kis_rc.txt && echo "⚠️ [한국투자] 주문 실패 — 아래 줄과 Actions 로그를 확인하세요"
+              failed kiwoom_result.txt kiwoom_rc.txt && echo "⚠️ [키움] 주문 실패 — 아래 줄과 Actions 로그를 확인하세요"
+              echo "🤖 FABOT 자동매매 실행 ($(date -u -d '+9 hours' '+%Y-%m-%d %H:%M') KST)"
+              echo "현재 규칙: $rules_line"
+              echo ""
+              echo "[한국투자]"
+              summarize kis_result.txt
+              echo ""
+              echo "[키움]"
+              summarize kiwoom_result.txt
+            } > telegram_message.txt
+          fi
 
           python - <<'PY'
           import os
