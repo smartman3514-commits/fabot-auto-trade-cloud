@@ -194,6 +194,23 @@ jobs:
       # 텔레그램으로 결과를 보낸다. 각 스크립트 출력에서 "총 자산/F&G .../최종 신호/
       # -> .../매매기록 저장" 줄만 골라서 요약한다 — 전체 로그를 그대로 보내면 너무
       # 길어서 오히려 안 읽게 된다. "KIS"는 인선님 요청으로 "한국투자"라고 부른다.
+      # 2026-11-23 인선: 산·판 날 알림에 '시장이 떨어진 이유'(뉴스 제목만 근거로 Claude 가 쓴 쉬운 한 문장)를 덧붙인다.
+      # 매매 판단과 상관없는 설명이라 실패해도 그냥 지나간다(그 줄 없이 알림).
+      - name: Market fall reason from news (optional)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 4
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          : > market_reason.txt
+          if grep -qsE "^-> (v2|국내포트) [^ ]+ (매수|매도) [0-9]" kis_result.txt kiwoom_result.txt; then
+            npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
+            pip install -q "claude-agent-sdk>=0.2" anyio || true
+            timeout 150 python market_reason.py > market_reason.txt || true
+          fi
+          echo "뉴스 이유: $(cat market_reason.txt)"
+
       - name: Notify Telegram
         if: always()
         env:

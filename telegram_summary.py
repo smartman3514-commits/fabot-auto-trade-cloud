@@ -126,6 +126,11 @@ def main(argv):
     fg = next((r["fg"] for _, r in res if r["fg"] is not None), None)
     if fg is not None:
         out.append(f"오늘 시장: 공포 점수 {fg:.1f} — {mood(fg)}")
+    # 11-23 인선: 떨어진 이유(뉴스 제목만 근거로 market_reason.py 가 만든 한 문장, 산·판 날에만)
+    reason_file = Path("market_reason.txt")
+    reason = reason_file.read_text(encoding="utf-8").strip().splitlines()[0] if reason_file.exists() and reason_file.read_text(encoding="utf-8").strip() else ""
+    if reason:
+        out.append(f"떨어진 이유(뉴스): {reason}")
     for a, r in res:
         if r["skipped"]:
             continue   # 그 장에 할 일이 없는 계좌(예: 미국장 실행 때 키움 국내포트)는 알림에서 뺀다
