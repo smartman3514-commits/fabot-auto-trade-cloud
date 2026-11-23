@@ -11,7 +11,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 KST = timezone(timedelta(hours=9))
-ACCOUNT = {"v2": "한투 v2", "국내포트": "키움 국내포트"}
+ACCOUNT = {"v2": "한국투자증권 모의계좌(v2)", "국내포트": "키움증권 모의계좌(국내포트)"}
+BROKER = {"v2": "한국투자증권", "국내포트": "키움증권"}
+DOW = "월화수목금토일"
+
+
+def when_text(market: str | None, now: datetime) -> str:
+    """언제 샀는지: 국내장은 오늘 장 마감, 미국장은 미국 날짜의 장 마감(한국 시간 새벽에 실행)."""
+    if market == "미국장":
+        us = (now - timedelta(days=1)) if now.hour < 12 else now
+        return f"미국 {us.month}월 {us.day}일({DOW[us.weekday()]}) 장 마감 — 한국 시간 {now.month}월 {now.day}일 {now:%H:%M}"
+    return f"{now.month}월 {now.day}일({DOW[now.weekday()]}) 국내장 마감 {now:%H:%M}"
 NAMES = {
     "v2": {"TQQQ": "TQQQ", "QLD": "QLD", "QQQ": "QQQM", "SCHD": "SCHD", "BRK": "버크셔B",
            "CC_DIV": "TIGER 배당커버드콜액티브(472150)", "CC_NAS": "TIGER 미국나스닥100타겟데일리커버드콜(486290)",
@@ -108,7 +118,7 @@ def main(argv):
     res = [("v2", parse(kis)), ("국내포트", parse(kw))]
     now = datetime.now(KST)
     market = next((r["market"] for _, r in res if r["market"]), None)
-    out = [f"🤖 FA 자동매매 · {now.month}월 {now.day}일({'월화수목금토일'[now.weekday()]}) {now:%H:%M}" + (f" {market} 마감" if market else "")]
+    out = [f"🤖 FA 자동매매 · {now.month}월 {now.day}일({DOW[now.weekday()]}) {now:%H:%M}" + (f" {market} 마감" if market else "")]
     for (a, r), rc in zip(res, rcs + [None] * (2 - len(rcs))):
         bad = rc is not None and rc.exists() and rc.read_text().strip() not in ("", "0")
         if bad or r["problems"]:
@@ -117,6 +127,8 @@ def main(argv):
     if fg is not None:
         out.append(f"오늘 시장: 공포 점수 {fg:.1f} — {mood(fg)}")
     for a, r in res:
+        if r["skipped"]:
+            continue   # 그 장에 할 일이 없는 계좌(예: 미국장 실행 때 키움 국내포트)는 알림에서 뺀다
         out.append("")
         head = f"[{ACCOUNT[a]}]" + (f" 평가 {won(r['total'])}" if r["total"] else "")
         out.append(head)
@@ -137,8 +149,10 @@ def main(argv):
                 out.append("오늘은 사고판 것 없어요.")
         for t in r["trades"]:
             tag = "🧪 (시험, 주문 안 냄) " if t["dry"] else ("✅ " if t["side"] == "매수" else "🔻 ")
-            out.append(f"{tag}{t['name']} {t['qty']:,}주 {t['side']} — 1주 {t['price']}, 모두 {t['amount']}")
-            out.append(f"   {t['why']}")
+            out.append(f"{tag}{BROKER[a]}에서 {t['name']} {t['qty']:,}주 {t['side']}")
+            out.append(f"   얼마: 1주 {t['price']}, 모두 {t['amount']}")
+            out.append(f"   언제: {when_text(r['market'] or market, now)}")
+            out.append(f"   왜: {t['why']}")
     print("\n".join(out))
 
 
