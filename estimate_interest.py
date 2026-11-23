@@ -12,6 +12,10 @@
   - 키움 국내포트: 원화 현금 — fabot_kr 장부
   - KIS 모의투자: 한투 계좌 원화 중 v2에 넣지 않은 나머지(지금 계좌 원화 − v2 원화 칸, 매매 없음)
 
+2026-11-23 인선("실질금리로 원화·외화 다, FA투자여정과 같이"): 연 3% 고정을 버리고 FA투자여정 엔진과 같은 금리 —
+원화 = OECD 한국 3개월 금리(그달 값, 최신 달이 없으면 마지막 달), 달러 = 미국 3개월 국채(^IRX, 그날 또는 그 전 값, 0% 아래는 0%) —
+에서 이자 세금 15.4% 를 뗀 '실제로 받는 이자'로 센다. 금리를 못 받으면 그날은 기록하지 않고 다음 실행 때 이어서 채운다.
+
 기록은 action="dividend", ticker=현금(이자,원화)/현금(이자,달러) — 대시보드가 배당과 같은 '현금흐름'으로
 총수익에 더하고, 표에서는 이자로 따로 보여 준다(app.js CASH_INTEREST_TICKERS 와 같은 문자열).
 같은 계좌·통화의 마지막 기록 날짜 다음 날부터만 계산하므로 여러 번 돌려도 두 번 쌓이지 않는다.
@@ -27,8 +31,8 @@ from live_order_executor import _inquire_balance_raw
 
 CASH_INTEREST_TRADE_KEY_KRW = "현금(이자,원화)"  # app.js의 CASH_INTEREST_TICKER_KRW와 동일해야 함
 CASH_INTEREST_TRADE_KEY_USD = "현금(이자,달러)"  # app.js의 CASH_INTEREST_TICKER_USD와 동일해야 함
-ANNUAL_RATE = 0.03
-DAILY_RATE = ANNUAL_RATE / 365
+INT_TAX = 0.154   # 이자소득세(소득세 14% + 지방세 1.4%) — 원화·달러 예수금 이자 둘 다 원천징수
+OECD_KR_3M = "https://sdmx.oecd.org/public/rest/data/OECD.SDD.STES,DSD_STES@DF_FINMARK,4.0/KOR.M.IR3TIB.PA....."
 KST = timezone(timedelta(hours=9))
 # 예전(월 단위) 기록이 있던 'KIS 모의투자'는 한투 계좌가 10-26 초기화된 뒤(새 계좌 10-27~)부터 일 단위로 센다.
 KIS_REMAINDER_START = "2026-10-27"
@@ -84,8 +88,39 @@ def _usdkrw_by_day(days: list[date], fallback: float) -> dict[date, float]:
     return out
 
 
+def _kr_rate_by_day(days: list[date]) -> dict[date, float]:
+    """그날이 속한 달(없으면 그 전 가장 가까운 달)의 OECD 한국 3개월 금리(연 %, 세전) — 엔진 market.py 와 같은 값."""
+    import csv, io
+    r = requests.get(OECD_KR_3M, timeout=30, headers={"User-Agent": "Mozilla/5.0"},
+                     params={"startPeriod": f"{days[0].year - 1}-01", "dimensionAtObservation": "AllDimensions",
+                             "format": "csvfilewithlabels"})
+    r.raise_for_status()
+    rows = sorted((date.fromisoformat(x["TIME_PERIOD"][:7] + "-01"), float(x["OBS_VALUE"]))
+                  for x in csv.DictReader(io.StringIO(r.text)) if x.get("OBS_VALUE"))
+    if not rows:
+        raise RuntimeError("OECD 한국 금리 자료가 비었어요")
+    out = {}
+    for d in days:
+        prev = [v for m, v in rows if m <= d]
+        out[d] = prev[-1] if prev else rows[0][1]
+    return out
+
+
+def _us_rate_by_day(days: list[date]) -> dict[date, float]:
+    """그날(또는 그 전 가장 가까운 날) 미국 3개월 국채 금리(^IRX, 연 %, 세전, 0% 아래는 0%) — 엔진과 같은 값."""
+    import fabot_v2 as v2
+    closes = sorted(v2.fetch_daily_closes("^IRX", "6mo"))
+    if not closes:
+        raise RuntimeError("^IRX 자료가 비었어요")
+    out = {}
+    for d in days:
+        prev = [c for cd, c in closes if cd <= d]
+        out[d] = max(0.0, prev[-1] if prev else closes[0][1])
+    return out
+
+
 def _record(env: dict, account: str, ticker: str, label: str, start_floor: date, yesterday: date,
-            krw_cash_by_day, dry_run: bool) -> None:
+            krw_cash_by_day, dry_run: bool, rate_by_day=_kr_rate_by_day, rate_name: str = "한국 3개월 금리") -> None:
     last = _last_interest_date(env, account, ticker)
     start = max(start_floor, last + timedelta(days=1)) if last else start_floor
     if start > yesterday:
@@ -93,11 +128,13 @@ def _record(env: dict, account: str, ticker: str, label: str, start_floor: date,
         return
     days = _days(start, yesterday)
     cash = krw_cash_by_day(days)
-    amount = round(sum(cash[d] * DAILY_RATE for d in days))
+    rate = rate_by_day(days)
+    amount = round(sum(cash[d] * rate[d] / 100 * (1 - INT_TAX) / 365 for d in days))
     avg = sum(cash.values()) / len(days)
+    avg_rate = sum(rate.values()) / len(days)
     period = f"{start}" if start == yesterday else f"{start}~{yesterday}"
-    memo = (f"추정 현금 이자(RP 연 3% 일 단위: 하루 끝 {label} 현금 × 3% ÷ 365, {period} {len(days)}일, "
-            f"평균 현금 {avg:,.0f}원)")
+    memo = (f"추정 현금 이자(세금 15.4% 뗀 실제 받는 이자: 하루 끝 {label} 현금 × {rate_name} 평균 {avg_rate:.2f}% × 0.846 ÷ 365, "
+            f"{period} {len(days)}일, 평균 현금 {avg:,.0f}원)")
     if amount <= 0:
         print(f"{account}({label}): {period} 현금 없음 — 기록하지 않습니다.")
         return
@@ -130,7 +167,7 @@ def main() -> int:
             fx = _usdkrw_by_day(ds, float(cfg.get("fx") or 1380.3))
             return {d: usd[d] * fx[d] for d in ds}
         _record(env, v2.V2_ACCOUNT, CASH_INTEREST_TRADE_KEY_USD, "달러(원화 환산)", floor, yesterday,
-                usd_in_krw, args.dry_run)
+                usd_in_krw, args.dry_run, _us_rate_by_day, "미국 3개월 국채")
     except Exception as exc:
         ok = False
         print(f"한투 v2 이자 실패: {exc}")
