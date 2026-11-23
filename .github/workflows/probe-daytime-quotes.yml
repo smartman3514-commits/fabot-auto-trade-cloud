@@ -1,0 +1,27 @@
+name: Probe US daytime quotes (KIS/Kiwoom demo) — read only
+
+# 2026-11-23: 미국주식 주간거래(한국 낮) 시세를 한투·키움 모의 API가 주는지 한 번 확인한다.
+# 주문은 내지 않는다 — 시세 조회만. 수동 실행 전용.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Read-only quote probe
+        env:
+          KIS_PAPER_APP_KEY: ${{ secrets.KIS_PAPER_APP_KEY }}
+          KIS_PAPER_APP_SECRET: ${{ secrets.KIS_PAPER_APP_SECRET }}
+          KIWOOM_PAPER_OVERSEAS_APP_KEY: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_KEY }}
+          KIWOOM_PAPER_OVERSEAS_APP_SECRET: ${{ secrets.KIWOOM_PAPER_OVERSEAS_APP_SECRET }}
+        run: python probe_daytime_quotes.py
