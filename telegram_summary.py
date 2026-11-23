@@ -43,7 +43,7 @@ def why(key: str, side: str, note: str) -> str:
     if side == "매도":
         return "시장이 너무 들떠서 번 것을 조금 챙겼어요"
     if "공포 매수" in n:
-        return "시장이 아주 무서워해서(공포 점수 10 이하) 조금 샀어요"
+        return "시장이 아주 무서워해서 샀어요. 다만 주가가 아직 비싼 편이라 많이 사지 않고 조금만 샀어요"
     if key == "GOLD" or "금 칸" in n:
         return "금은 한 달에 한 번씩 나눠 사요 — 이번 차례예요"
     if key.startswith("CC") or "커버드콜" in n or "평시" in n:
@@ -61,7 +61,7 @@ def why(key: str, side: str, note: str) -> str:
 
 def parse(path: Path):
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines() if path.exists() else []
-    fg = cape_block = None; total = None; acct = None; trades = []; problems = []; skipped = None; market = None
+    fg = cape_block = None; total = None; acct = None; trades = []; problems = []; skipped = None; market = None; resting = False; capewait = False
     for ln in lines:
         m = re.match(r"^(v2|국내포트) F&G ([\d.]+)", ln)
         if m:
@@ -73,6 +73,10 @@ def parse(path: Path):
             if "건너뜁니다" in ln or "아무것도 하지 않습니다" in ln:
                 skipped = ln.split(":", 1)[1].strip()
             market = "국내장" if "국내장" in ln else "미국장" if ("미국장" in ln or "해외" in ln) else market
+        if ln.startswith("-> ") and "쉬는 중" in ln:
+            resting = True
+        if ln.startswith("-> ") and "대기" in ln and "CAPE 막기" in ln:
+            capewait = True
         t = TRADE.match(ln)
         if t:
             a, key, side, filled, want, approx, px, note = t.groups()
@@ -90,7 +94,7 @@ def parse(path: Path):
             if mm:
                 problems.append(f"{NAMES.get(mm.group(1), {}).get(mm.group(2), mm.group(2))} {mm.group(3)}")
     return {"acct": acct, "fg": fg, "cape_block": cape_block, "total": total, "trades": trades, "problems": problems,
-            "skipped": skipped, "market": market, "empty": not lines}
+            "skipped": skipped, "market": market, "empty": not lines, "resting": resting, "capewait": capewait}
 
 
 def mood(fg: float) -> str:
@@ -112,8 +116,6 @@ def main(argv):
     fg = next((r["fg"] for _, r in res if r["fg"] is not None), None)
     if fg is not None:
         out.append(f"오늘 시장: 공포 점수 {fg:.1f} — {mood(fg)}")
-        if any(r["cape_block"] for _, r in res):
-            out.append("주가가 비싼 편이라 평소 매수는 쉬고, 아주 무서울 때만 조금 사요.")
     for a, r in res:
         out.append("")
         head = f"[{ACCOUNT[a]}]" + (f" 평가 {won(r['total'])}" if r["total"] else "")
@@ -127,7 +129,12 @@ def main(argv):
         for p in r["problems"]:
             out.append(f"⚠️ {p}")
         if not r["trades"]:
-            out.append("오늘은 사고판 것 없어요.")
+            if r["resting"]:
+                out.append("오늘은 사고판 것 없어요. 지난번에 산 뒤 며칠 쉬는 기간이에요.")
+            elif r["capewait"] and fg is not None and fg <= 45:
+                out.append("오늘은 사고판 것 없어요. 시장은 무서워하지만 주가가 아직 비싼 편이라 기다리는 중이에요.")
+            else:
+                out.append("오늘은 사고판 것 없어요.")
         for t in r["trades"]:
             tag = "🧪 (시험, 주문 안 냄) " if t["dry"] else ("✅ " if t["side"] == "매수" else "🔻 ")
             out.append(f"{tag}{t['name']} {t['qty']:,}주 {t['side']} — 1주 {t['price']}, 모두 {t['amount']}")
