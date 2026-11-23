@@ -43,7 +43,7 @@ def why(key: str, side: str, note: str) -> str:
     if side == "매도":
         return "시장이 너무 들떠서 번 것을 조금 챙겼어요"
     if "공포 매수" in n:
-        return "시장이 아주 무서워해서 샀어요. 다만 주가가 아직 비싼 편이라 많이 사지 않고 조금만 샀어요"
+        return "시장이 아주 무서워해서 조금 샀어요. 지난 몇 년 동안 주가가 많이 오른 뒤라, 한꺼번에 사지 않고 나눠서 사요"
     if key == "GOLD" or "금 칸" in n:
         return "금은 한 달에 한 번씩 나눠 사요 — 이번 차례예요"
     if key.startswith("CC") or "커버드콜" in n or "평시" in n:
@@ -132,7 +132,7 @@ def main(argv):
             if r["resting"]:
                 out.append("오늘은 사고판 것 없어요. 지난번에 산 뒤 며칠 쉬는 기간이에요.")
             elif r["capewait"] and fg is not None and fg <= 45:
-                out.append("오늘은 사고판 것 없어요. 시장은 무서워하지만 주가가 아직 비싼 편이라 기다리는 중이에요.")
+                out.append("오늘은 사고판 것 없어요. 지난 몇 년 동안 주가가 많이 오른 뒤라, 시장이 더 크게 무서워할 때 조금 사려고 기다려요.")
             else:
                 out.append("오늘은 사고판 것 없어요.")
         for t in r["trades"]:
