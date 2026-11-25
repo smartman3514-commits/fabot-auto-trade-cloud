@@ -1,0 +1,21 @@
+# 11-25 인선(비판 4·5번): 저장소에 올릴 때마다 시험을 돌린다 — 규칙 얼리기(2027-01-02 점검까지), 매매 규칙 시험.
+# 자동매매(auto-trade.yml)와는 따로 돌아서, 시험이 깨져도 매매를 멈추지는 않고 빨간 표시로 알린다.
+name: tests
+
+on:
+  push:
+    branches: [squashed2]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 패키지 설치
+        run: pip install -r requirements.txt pytest
+      - name: 시험
+        run: python -m pytest -q tests
