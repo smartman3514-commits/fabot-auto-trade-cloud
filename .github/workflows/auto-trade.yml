@@ -264,7 +264,7 @@ jobs:
             fi
           }
           # 2026-10-26: 한투 = 한투 v2, 키움 = 키움 국내포트(같은 v2 규칙, 국내 ETF). 옛 TQQQ 25/50/100% 규칙은 끔.
-          rules_line=$(python -c "import fabot_v2 as v; print(f'v2 규칙 · FA곡선 {v.CURVE_BASE:.0%}+{1 - v.CURVE_BASE:.0%}·S² (RSI≤{v.RSI_ACCEL_TH} +{v.RSI_ACCEL_ADD:.0%}p, CAPE 막기) · TQQQ 칸 {v.SELL_HALF}/{v.SELL_ALL} 매도 · 배당 칸 사다리 · 커버드콜 F&G≤{v.PEACE_HI} {v.PEACE_FRAC:.0%}/{v.PEACE_GAP_DAYS}일 — [한국투자] 한투 v2(해외 ETF) · [키움] 국내포트(국내 ETF)')")
+          rules_line=$(python -c "import fabot_v2 as v; print(f'v2 규칙 · FA곡선 {v.CURVE_BASE:.0%}+{1 - v.CURVE_BASE:.0%}·S^{v.CURVE_POW:g} (RSI≤{v.RSI_ACCEL_TH} +{v.RSI_ACCEL_ADD:.0%}p, CAPE 막기) · TQQQ 칸 {v.SELL_HALF}/{v.SELL_ALL} 매도 · 배당 칸 사다리 · 커버드콜 F&G≤{v.PEACE_HI} {v.PEACE_FRAC:.0%}/{v.PEACE_GAP_DAYS}일 — [한국투자] 한투 v2(해외 ETF) · [키움] 국내포트(국내 ETF)')")
 
           # 오류로 끝났거나 체결되지 않은 주문이 있으면 맨 위에 눈에 띄게 적는다(2026-11-02).
           failed() {
