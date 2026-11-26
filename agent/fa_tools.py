@@ -29,7 +29,7 @@ ENV_NAMES = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "TELEGRAM_BOT_TOKEN", "TELE
              "KIS_PAPER_APP_KEY", "KIS_PAPER_APP_SECRET", "KIS_PAPER_STOCK",
              "KIWOOM_PAPER_APP_KEY", "KIWOOM_PAPER_APP_SECRET",
              "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL")
-WINDOWS = {"us": "04:40~06:10 KST(미국장 마감 직전, 서머타임에 따라 05:00/06:00 마감)", "kr": "15:05~15:35 KST(국내장 마감 동시호가)"}
+WINDOWS = {"us": "04:40~06:10 KST(미국장 마감 직전, 서머타임에 따라 05:00/06:00 마감). 조기 폐장일(us_market_calendar.py, 11-27·12-24 등)은 13:00 뉴욕 앞뒤 = 겨울 02:40~03:20 KST", "kr": "15:05~15:35 KST(국내장 마감 동시호가)"}
 
 
 def load_env() -> dict[str, bool]:

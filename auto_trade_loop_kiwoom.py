@@ -132,7 +132,9 @@ TQQQ_WINDOW_AFTER = timedelta(minutes=20)
 
 
 def _today_nyse_close_kst(now_utc: datetime) -> datetime:
-    close_local = now_utc.astimezone(NYSE_TZ).replace(hour=16, minute=0, second=0, microsecond=0)
+    from us_market_calendar import nyse_close_hour   # 2026-11-26: 조기 폐장일(11-27·12-24 등)은 13:00 뉴욕
+    local = now_utc.astimezone(NYSE_TZ)
+    close_local = local.replace(hour=nyse_close_hour(local.date()), minute=0, second=0, microsecond=0)
     return close_local.astimezone(KST)
 
 

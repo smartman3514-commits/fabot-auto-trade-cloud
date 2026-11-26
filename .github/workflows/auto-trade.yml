@@ -21,6 +21,10 @@ on:
     # 진짜 마감 전후 20분인가"는 auto_trade_loop.py의 _within_tqqq_close_window()가
     # zoneinfo로 정확히 계산해서 그때만 실행한다 — 나머지 실행은 조용히 건너뛴다.
     - cron: "15,45 19,20,21 * * 0-5"
+    # 2026-11-26: 미국 조기 폐장일(13:00 뉴욕 = 겨울 03:00 KST)용 — 17:45·18:05 UTC(02:45·03:05 KST).
+    # 평소엔 실행 창 밖이라 조용히 건너뛴다(us_market_calendar.py 에 적힌 날만 통과).
+    - cron: "45 17 * * 1-5"
+    - cron: "5 18 * * 1-5"
   # 2026-09-07: GitHub Actions 자체 schedule이 몇 시간씩 밀리거나 아예 건너뛰는
   # 문제가 실제로 관측됨(06:19 UTC 예정이 12:34, 21:xx, 23:xx UTC에 뒤늦게 실행됨).
   # update-fg.yml에서 이미 검증된 방법(cron-job.org → repository_dispatch)을 그대로

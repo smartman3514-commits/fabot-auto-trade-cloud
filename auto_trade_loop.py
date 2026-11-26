@@ -134,8 +134,9 @@ TQQQ_WINDOW_AFTER = timedelta(minutes=20)
 def _today_nyse_close_kst(now_utc: datetime) -> datetime:
     """오늘 날짜 기준 16:00 America/New_York을 계산해 KST로 변환한다.
     zoneinfo가 그 날짜의 실제 서머타임 여부를 알아서 반영한다."""
+    from us_market_calendar import nyse_close_hour   # 2026-11-26: 조기 폐장일(11-27·12-24 등)은 13:00 뉴욕
     local_today = now_utc.astimezone(NYSE_TZ)
-    close_local = local_today.replace(hour=16, minute=0, second=0, microsecond=0)
+    close_local = local_today.replace(hour=nyse_close_hour(local_today.date()), minute=0, second=0, microsecond=0)
     return close_local.astimezone(KST)
 
 
