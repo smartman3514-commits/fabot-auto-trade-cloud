@@ -82,6 +82,24 @@ def _use_yahoo_prices() -> str:
 
 # ── ① 시장 신호 ─────────────────────────────────────────────────────────────
 
+def _journey_cape() -> dict:
+    """FA여정 엔진이 오늘 계산에 쓴 CAPE 출처·마지막 달(/api/cape). 마지막 달이 2달 넘게 지났으면 stale=True."""
+    from datetime import date as _date
+
+    import requests
+    try:
+        r = requests.get("https://fa-journey-391404582003.us-central1.run.app/api/cape", timeout=20)
+        r.raise_for_status()
+        j = r.json()
+        last = j["months"][-1][:7]
+        y, m = int(last[:4]), int(last[5:7])
+        t = _date.today()
+        gap = (t.year - y) * 12 + (t.month - m)
+        return {"source": j.get("source", "multpl"), "last_month": last, "asOf": j.get("asOf"), "stale": gap > 2, "note": (j.get("note") or "")[:120]}
+    except Exception as e:  # noqa: BLE001
+        return {"source": "조회 실패", "error": str(e)[:120]}
+
+
 def market_signal() -> dict:
     """오늘의 공포·탐욕 지수(CNN), 공포 점수 S·FA곡선 목표 비중, TQQQ RSI, CAPE 막기."""
     import crisis_plan
@@ -104,6 +122,8 @@ def market_signal() -> dict:
             "tqqq_close": [str(tq[-1][0]), tq[-1][1]],
             "cape": cape.get("cape"), "cape_line": cape.get("line") and round(cape["line"], 1), "cape_block": bool(cape.get("hot")),
             "cape_text": v2.cape_text(cape),
+            # 11-26 인선: CAPE 사이트(multpl)가 조용히 죽어도 알 수 있게 — 자동매매·FA여정이 각각 어디서 CAPE 를 받았는지
+            "cape_sources": {"자동매매": cape.get("source") or ("조회 실패" if cape.get("error") else "multpl"), "FA여정": _journey_cape()},
             "rules": {"sell_half_fg": v2.SELL_HALF, "sell_all_fg": v2.SELL_ALL, "sell_gap_days": v2.SELL_GAP_DAYS,
                       "dip_fg": v2.DIP_FG, "cape_k": v2.CAPE_K, "peace_fg_max": v2.PEACE_HI}}
 
