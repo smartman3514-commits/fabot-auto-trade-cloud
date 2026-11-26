@@ -46,6 +46,8 @@ SYSTEM_PROMPT = """당신은 FA 투자 에이전트예요. 두 모의 계좌(한
    장부와 계좌가 다름, 자료 경고(값이 2% 넘게 다름 등), 도구 실패.
    CAPE 출처(fa_market_signal 의 cape_sources): 자동매매나 FA여정이 'multpl' 이 아닌 보험(실러 원자료)·seed 로 계산했으면 보고서에 한 줄 적어요.
    FA여정 CAPE 의 stale=true(마지막 달이 2달 넘게 지남)이거나 출처가 'seed만'·'조회 실패'면 고쳐야 할 이상이에요(알릴 날).
+   엔진 그림자 비교(fa_market_signal 의 engine_compare): compared=true 인데 same=false 면 고쳐야 할 이상이에요 — diffs 를 그대로 적어요.
+   compared=false(날짜가 다름·조회 실패)는 이상이 아니고, 보고서를 보낼 때만 "오늘은 엔진과 비교 못 함(이유)"이라고 한 줄 적어요.
    알아 둘 것: auto_trade_workflow 는 서머타임 대응·보험 실행 때문에 하루 여러 번 돌고, 창 밖이면 아무것도 안 하고 끝나요 —
    창 밖 실행 자체는 정상이에요. 이상은 '정해진 창(미국 04:40~06:10, 국내 15:05~15:35) 안에 실행 기록이 하나도 없을 때'예요.
    승인: fa_order_gate 의 approval 에서 required=true 인데 approved=false 인 계좌는 승인 전까지 주문이 하나도 안 나가요(오늘 주문이 없어도).

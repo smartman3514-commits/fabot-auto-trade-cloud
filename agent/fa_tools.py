@@ -100,6 +100,34 @@ def _journey_cape() -> dict:
         return {"source": "조회 실패", "error": str(e)[:120]}
 
 
+def _engine_compare(day: str, fg: float, target: float, rsi: float, hot: bool, dip_fg: int) -> dict:
+    """11-26 인선(시스템 줄이기 1단계, 그림자 비교): FA여정 엔진의 '오늘 판단'(/api/today)과 자동매매(fabot_v2) 판단을 나란히.
+    같은 미국 거래일일 때만 비교한다. 주문은 바꾸지 않는다 — 2주 동안 같으면 1월 점검 때 엔진 판단으로 넘어갈지 정한다.
+    허용 차이: F&G 3점(자동매매는 아침 실시간 값, 엔진은 마감 직전 값), 목표 비중 5%p(엔진은 나스닥100 으로 만든 3배라 실제 TQQQ 와 조금 다름), RSI 3."""
+    import requests
+    try:
+        r = requests.get("https://fa-journey-391404582003.us-central1.run.app/api/today", timeout=20)
+        r.raise_for_status()
+        e = r.json()
+    except Exception as ex:  # noqa: BLE001
+        return {"compared": False, "why": f"엔진 조회 실패: {str(ex)[:100]}"}
+    if e["date"] != day:
+        return {"compared": False, "why": f"날짜가 달라 비교 못함(엔진 {e['date']}, 자동매매 {day}) — 엔진 자료가 하루 늦는 날이 있음", "engine": e}
+    diffs = []
+    if abs(e["fg"] - fg) > 3:
+        diffs.append(f"F&G 엔진 {e['fg']:.1f} vs 자동매매 {fg:.1f}")
+    if abs(e["target"] - target) > .05:
+        diffs.append(f"목표 비중 엔진 {e['target']:.0%} vs 자동매매 {target:.0%}")
+    if abs(e["rsi"] - rsi) > 3:
+        diffs.append(f"TQQQ RSI 엔진 {e['rsi']:.1f} vs 자동매매 {rsi:.1f}")
+    if e["hot"] != hot:
+        diffs.append(f"비쌀 때 막기 엔진 {'막힘' if e['hot'] else '열림'} vs 자동매매 {'막힘' if hot else '열림'}")
+    auto_dip = hot and fg <= dip_fg
+    if e["conditions"]["dip_fg_met"] != auto_dip:
+        diffs.append(f"공포 매수 조건(F&G ≤ {dip_fg}) 엔진 {e['conditions']['dip_fg_met']} vs 자동매매 {auto_dip}")
+    return {"compared": True, "same": not diffs, "diffs": diffs, "engine": e}
+
+
 def market_signal() -> dict:
     """오늘의 공포·탐욕 지수(CNN), 공포 점수 S·FA곡선 목표 비중, TQQQ RSI, CAPE 막기."""
     import crisis_plan
@@ -124,6 +152,7 @@ def market_signal() -> dict:
             "cape_text": v2.cape_text(cape),
             # 11-26 인선: CAPE 사이트(multpl)가 조용히 죽어도 알 수 있게 — 자동매매·FA여정이 각각 어디서 CAPE 를 받았는지
             "cape_sources": {"자동매매": cape.get("source") or ("조회 실패" if cape.get("error") else "multpl"), "FA여정": _journey_cape()},
+            "engine_compare": _engine_compare(str(tq[-1][0]), fg, float(fear["target"]), float(rsi), bool(cape.get("hot")), v2.DIP_FG),
             "rules": {"sell_half_fg": v2.SELL_HALF, "sell_all_fg": v2.SELL_ALL, "sell_gap_days": v2.SELL_GAP_DAYS,
                       "dip_fg": v2.DIP_FG, "cape_k": v2.CAPE_K, "peace_fg_max": v2.PEACE_HI}}
 
